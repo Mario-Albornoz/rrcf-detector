@@ -1,0 +1,16 @@
+# Kafka
+confluent-kafka==2.6.1
+
+# Performance optimizations
+orjson==3.10.11
+ciso8601==2.3.1
+
+# Core dependencies
+numpy==2.5.2
+rrcf==0.4.4
+
+# Redis (for score ledger)
+redis==5.2.0
+
+# Optional but recommended
+# prometheus-client==0.21.0  # For production metrics
