@@ -43,27 +43,6 @@ class AnomalyDetector:
         return score
 
     def evict(self, tree_key: str):
-        """
-        Evict oldest point from the specified tree when window is full.
-
-        TODO (DETECT-1):
-        - Get oldest_index from tree_state.indices[0]
-        - Call tree_state.tree.forget_point(oldest_index)
-        - Update metadata:
-          * tree_state.indices.popleft() (remove oldest)
-          * tree_state.current_size = len(tree_state.indices)
-          * tree_state.oldest_index = tree_state.indices[0] if tree_state.indices else 0
-        - Handle edge case: what if tree is empty?
-
-        PERFORMANCE NOTE:
-        - RRCF forget_point is O(log n) but can be costly at high throughput
-        - This is called on EVERY insert when window is full
-        - Must be efficient to maintain 100k msg/sec target
-
-        TESTING (DETECT-1 acceptance criteria):
-        - Unit test must verify window size never exceeds configured max
-        - No memory growth over repeated insert/evict cycles
-        """
         tree_state: TreeState = self.forest[tree_key]
 
         if tree_state.current_size == 0:
@@ -71,7 +50,7 @@ class AnomalyDetector:
 
         tree_state.tree.forget_point(tree_state.oldest_index)
         tree_state.indices.popleft()
-        tree_state.oldest_index = tree_state.indices[0]
+        tree_state.oldest_index = tree_state.indices[0] if tree_state.indices else 0
 
     def insert_point(self, tree_key: str, point: list, index: int):
 
@@ -109,11 +88,13 @@ class AnomalyDetector:
         DETECT-2 will add calibration (rolling mean/stddev per class).
         """
 
-        tree: rrcf.RCTree = self.forest[tree_key]
-        return tree.codisp(index)
+        if not self._has_tree(tree_key):
+            return 0
+        tree_state: TreeState = self.forest[tree_key]
+        return tree_state.tree.codisp(index)
 
     def _create_tree_if_absent(self, data: NormalizedVectorDto):
-        if not self._has_tree(data):
+        if not self._has_tree(get_instrument_key(data)):
             tree = TreeState(
                 tree=rrcf.RCTree(),
                 max_size=self.config["window_size"],
@@ -124,8 +105,8 @@ class AnomalyDetector:
             )
             self.forest[get_instrument_key(data)] = tree
 
-    def _has_tree(self, data: NormalizedVectorDto) -> bool:
-        if get_instrument_key(data) not in self.forest:
+    def _has_tree(self, tree_key: str) -> bool:
+        if tree_key not in self.forest:
             return False
         else:
             return True
@@ -139,7 +120,7 @@ class AnomalyDetector:
         response = {
             "current_size": tree_state.current_size,
             "max_size": tree_state.max_size,
-            "oldest_index": tree_state.indices[0],
+            "oldest_index": tree_state.indices[0] if tree_state.indices else 0,
             "newest_index": (tree_state.indices[-1] if tree_state.indices else None),
             "all_indices": list(tree_state.indices),
         }
