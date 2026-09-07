@@ -17,6 +17,9 @@ class TreeState:
     oldest_index: int
     indices: deque
 
+    is_warm: bool
+    min_fill_threshold: int
+
 
 class AnomalyDetector:
     def __init__(self, config: dict):
@@ -35,11 +38,14 @@ class AnomalyDetector:
             data.cusum_price_step,
         ]
 
-        tree_state = self.forest[get_instrument_key(data)]
+        tree_state: TreeState = self.forest[get_instrument_key(data)]
         index = tree_state.next_index
         self.insert_point(get_instrument_key(data), feature_point, index=index)
-        score = self.scoreCoDisp(get_instrument_key(data), index=index)
 
+        if not tree_state.is_warm:
+            return None
+
+        score = self.scoreCoDisp(get_instrument_key(data), index=index)
         return score
 
     def evict(self, tree_key: str):
@@ -66,28 +72,10 @@ class AnomalyDetector:
         tree_state.next_index += 1
         tree_state.oldest_index = tree_state.indices[0] if tree_state.indices else 0
 
-        pass
+        if tree_state.current_size >= tree_state.min_fill_threshold:
+            tree_state.is_warm = True
 
     def scoreCoDisp(self, tree_key: str, index: int) -> float:
-        """
-        - Return score (calibration happens in DETECT-2, not here)
-
-        PARAMETERS:
-        - tree_key: (exchange, instrument_class) identifier
-        - index: Index of point to score (just inserted)
-
-        RETURNS:
-        - float: Raw CoDisp score (higher = more anomalous)
-
-        PERFORMANCE CRITICAL:
-        - CoDisp computation is expensive (tree traversal)
-        - This is called after EVERY insert (3k-100k/sec)
-        - Consider: batch scoring if possible? Or async?
-
-        NOTE: Raw CoDisp scores are NOT comparable across instrument classes.
-        DETECT-2 will add calibration (rolling mean/stddev per class).
-        """
-
         if not self._has_tree(tree_key):
             return 0
         tree_state: TreeState = self.forest[tree_key]
@@ -102,6 +90,8 @@ class AnomalyDetector:
                 next_index=0,
                 oldest_index=0,
                 indices=deque(maxlen=self.config["window_size"]),
+                is_warm=False,
+                min_fill_threshold=self.config["min_fill_threshold"],
             )
             self.forest[get_instrument_key(data)] = tree
 

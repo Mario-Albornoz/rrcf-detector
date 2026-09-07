@@ -20,7 +20,7 @@ from src.kafka.consumer import NormalizedVectorDto
 @pytest.fixture
 def config():
     """Test configuration with small window for fast tests."""
-    return {"window_size": 5}
+    return {"window_size": 5, "min_fill_threshold": 1}
 
 
 @pytest.fixture

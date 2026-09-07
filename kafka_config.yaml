@@ -37,5 +37,5 @@ redis:
 service:
   num_workers: 4
   rrcf_window_size: 1000
-  min_fill_threshold: 0.25
+  min_fill_threshold: 50
   log_level: INFO
