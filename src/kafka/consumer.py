@@ -4,13 +4,11 @@ import sys
 import time
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Optional
+from typing import Callable, Optional
 
 import ciso8601
 import orjson
 from confluent_kafka import Consumer, KafkaError, KafkaException
-
-from src.detection.AnomalyDetector import AnomalyDetector
 
 from .metrics import KafkaMetrics
 
@@ -39,7 +37,7 @@ class NormalizedVectorConsumer:
     def __init__(
         self,
         config: dict,
-        message_handler: AnomalyDetector,
+        message_handler: Callable[[NormalizedVectorDto], None],
         metrics_report_interval: int = 5,
         batch_size: int = 100,
     ):
