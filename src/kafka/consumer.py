@@ -1,4 +1,3 @@
-# CHANGED: Added missing imports (time, signal, json) for full functionality
 import json
 import signal
 import sys
@@ -57,15 +56,10 @@ class NormalizedVectorConsumer:
         signal.signal(signal.SIGINT, self._signal_handler)
 
     def _signal_handler(self, signum, frame):
-        """CHANGED: Added signal handler for graceful shutdown on SIGTERM/SIGINT."""
         print(f"\nReceived signal {signum}, initiating graceful shutdown...")
         self.shutdown()
 
     def start(self, topics: list[str]):
-        """
-        Start consuming messages from the specified topics.
-        CHANGED: Implemented bulk processing using consume() instead of poll() for 10-100x throughput.
-        """
         try:
             self.consumer.subscribe(topics)
             print(f"Subscribed to topics: {topics}")
