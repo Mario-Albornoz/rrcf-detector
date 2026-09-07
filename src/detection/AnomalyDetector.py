@@ -20,59 +20,12 @@ class TreeState:
 
 class AnomalyDetector:
     def __init__(self, config: dict):
-        """
-        TODO (DETECT-1):
-        - Extract window_size from config (e.g., 1000 points)
-        - Initialize point_index counter (needed for RRCF insert/delete)
-        - RECOMMENDED: Use ForestState dataclass approach:
-
-        self.forest = {}  # tree_key -> ForestState
-
-        WHY indices per-tree, not global?
-        - Each tree is independent
-        - tree.codisp(index) looks in THAT tree only
-        - Easier to track and debug
-
-        WHY deque for indices?
-        - Auto-evicts oldest when at maxlen (append automatically drops first)
-        - Always: oldest = indices[0], newest = indices[-1]
-        - O(1) append/popleft operations
-
-        PERFORMANCE NOTE:
-        - self.forest will be accessed on EVERY message (hot path)
-        - Consider using __slots__ if memory becomes an issue
-        - Window size: larger = more memory but better gradual anomaly detection
-        """
         self.config = config
-        self.forest = {}  # Key: (exchange, instrument_class), Value: tree + metadata
-        pass
+        self.forest = {}
 
     def ingest_data(self, data: NormalizedVectorDto):
-        """
-        Main entry point for processing a vector from Kafka consumer.
-
-        ✅ GOOD: Dynamic tree creation with _create_tree_if_absent()
-        ✅ GOOD: Feature extraction to 6D point
-
-        TODO (DETECT-1):
-        - Implement eviction logic (check if window full before insert)
-        - Call scoreCoDisp after insertion
-        - Return the score
-        - Update TreeState metadata after insert
-
-        POTENTIAL ISSUE:
-        - get_current_index() might fail if tree just created (no indices yet)
-        - Consider using tree_state.next_index directly instead
-
-        PERFORMANCE CRITICAL:
-        - This is called for EVERY Kafka message (3k-100k/sec)
-        - Minimize allocations and copies
-        - Feature extraction is inline ✅
-        """
-        # ✅ Create tree on-demand if new key
         self._create_tree_if_absent(data)
 
-        # ✅ Extract 6D feature vector
         feature_point = [
             data.z_intertick_fast,
             data.z_price_step_fast,
@@ -82,15 +35,12 @@ class AnomalyDetector:
             data.cusum_price_step,
         ]
 
-        # TODO: This might fail on first insert - tree just created, no indices yet
-        # Consider: tree_state = self.forest[get_instrument_key(data)]
-        #           index = tree_state.next_index
-        self.insert_point(
-            get_instrument_key(data),
-            feature_point,
-            index=self.get_current_index(get_instrument_key(data)) + 1,
-        )
-        pass
+        tree_state = self.forest[get_instrument_key(data)]
+        index = tree_state.next_index
+        self.insert_point(get_instrument_key(data), feature_point, index=index)
+        score = self.scoreCoDisp(get_instrument_key(data), index=index)
+
+        return score
 
     def evict(self, tree_key: str):
         """
@@ -122,8 +72,6 @@ class AnomalyDetector:
         tree_state.tree.forget_point(tree_state.oldest_index)
         tree_state.indices.popleft()
         tree_state.oldest_index = tree_state.indices[0]
-
-        pass
 
     def insert_point(self, tree_key: str, point: list, index: int):
 
@@ -197,9 +145,6 @@ class AnomalyDetector:
         }
 
         return response
-
-    def get_current_index(self, tree_key):
-        return self.get_window_state(tree_key)["newest_index"] + 1
 
     def get_tree_count(self) -> int:
         return len(self.forest)

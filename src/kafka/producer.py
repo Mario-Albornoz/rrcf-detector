@@ -42,7 +42,6 @@ class AlertProducer:
                 callback=self._delivery_callback,
             )
 
-            # Poll for delivery callbacks (non-blocking)
             self.producer.poll(0)
             self._maybe_report_metrics()
 
@@ -71,9 +70,7 @@ class AlertProducer:
                     queued += 1
 
                 except BufferError:
-                    # Producer queue is full, poll to make space
                     self.producer.poll(0.1)
-                    # Retry this message
                     try:
                         payload = self._serialize_alert(alert)
                         self.producer.produce(
@@ -91,7 +88,6 @@ class AlertProducer:
                     print(f"Error queuing alert: {e}")
                     self.metrics.record_failure()
 
-            # Single poll for all callbacks after batch is queued
             self.producer.poll(0)
             self._maybe_report_metrics()
 
