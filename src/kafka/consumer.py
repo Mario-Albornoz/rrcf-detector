@@ -32,8 +32,6 @@ class NormalizedVectorDto:
 
 
 class NormalizedVectorConsumer:
-    """High-performance Kafka consumer for normalized feature vectors."""
-
     def __init__(
         self,
         config: dict,
@@ -102,7 +100,6 @@ class NormalizedVectorConsumer:
             print("Consumer closed")
 
     def _deserialize_message(self, msg) -> Optional[NormalizedVectorDto]:
-        """Deserialize Kafka message to NormalizedVectorDto."""
         try:
             data = orjson.loads(msg.value().decode("utf-8"))
 

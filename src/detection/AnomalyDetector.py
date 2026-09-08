@@ -9,6 +9,14 @@ from .utils import get_instrument_key
 
 
 @dataclass
+class AnomalyDetectorConfig:
+    window_size: int
+    min_fill_threshold: int
+    normal_threshold: float = 5.0
+    medium_threshold: float = 10.0
+
+
+@dataclass
 class TreeState:
     tree: rrcf.RCTree
     max_size: int
@@ -16,7 +24,6 @@ class TreeState:
     next_index: int
     oldest_index: int
     indices: deque
-
     is_warm: bool
     min_fill_threshold: int
 
@@ -25,6 +32,9 @@ class AnomalyDetector:
     def __init__(self, config: dict):
         self.config = config
         self.forest = {}
+        
+        self.normal_threshold = config.get("normal_threshold", 5.0)
+        self.medium_threshold = config.get("medium_threshold", 10.0)
 
     def ingest_data(self, data: NormalizedVectorDto):
         self._create_tree_if_absent(data)
@@ -40,7 +50,7 @@ class AnomalyDetector:
 
         tree_state: TreeState = self.forest[get_instrument_key(data)]
         index = tree_state.next_index
-        self.insert_point(get_instrument_key(data), feature_point, index=index)
+        self._insert_point(get_instrument_key(data), feature_point, index=index)
 
         if not tree_state.is_warm:
             return None
@@ -58,8 +68,7 @@ class AnomalyDetector:
         tree_state.indices.popleft()
         tree_state.oldest_index = tree_state.indices[0] if tree_state.indices else 0
 
-    def insert_point(self, tree_key: str, point: list, index: int):
-
+    def _insert_point(self, tree_key: str, point: list, index: int):
         tree_state: TreeState = self.forest[tree_key]
 
         if tree_state.current_size >= tree_state.max_size:
@@ -96,10 +105,7 @@ class AnomalyDetector:
             self.forest[get_instrument_key(data)] = tree
 
     def _has_tree(self, tree_key: str) -> bool:
-        if tree_key not in self.forest:
-            return False
-        else:
-            return True
+        return tree_key in self.forest
 
     def get_window_state(self, tree_key: str) -> dict:
         if tree_key not in self.forest:
@@ -107,7 +113,7 @@ class AnomalyDetector:
 
         tree_state: TreeState = self.forest[tree_key]
 
-        response = {
+        return {
             "current_size": tree_state.current_size,
             "max_size": tree_state.max_size,
             "oldest_index": tree_state.indices[0] if tree_state.indices else 0,
@@ -115,7 +121,13 @@ class AnomalyDetector:
             "all_indices": list(tree_state.indices),
         }
 
-        return response
-
     def get_tree_count(self) -> int:
         return len(self.forest)
+
+    def determine_alert_level(self, score: float) -> str:
+        if score < self.normal_threshold:
+            return "normal"
+        elif score < self.medium_threshold:
+            return "medium"
+        else:
+            return "high"
