@@ -30,8 +30,6 @@ class Partitioner:
             detector_config = AnomalyDetectorConfig(
                 window_size=self.config.detector_config.window_size,
                 min_fill_threshold=self.config.detector_config.min_fill_threshold,
-                normal_threshold=self.config.detector_config.normal_threshold,
-                medium_threshold=self.config.detector_config.medium_threshold,
             )
 
             kafka_config = {
@@ -128,8 +126,6 @@ class Partitioner:
         detector_config = AnomalyDetectorConfig(
             window_size=self.config.detector_config.window_size,
             min_fill_threshold=self.config.detector_config.min_fill_threshold,
-            normal_threshold=self.config.detector_config.normal_threshold,
-            medium_threshold=self.config.detector_config.medium_threshold,
         )
 
         kafka_config = {

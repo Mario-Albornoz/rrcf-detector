@@ -3,6 +3,7 @@ from dataclasses import dataclass
 
 import rrcf
 
+from src.detection.stats import Stats, update_stats
 from src.kafka.consumer import NormalizedVectorDto
 
 from .utils import get_instrument_key
@@ -12,8 +13,6 @@ from .utils import get_instrument_key
 class AnomalyDetectorConfig:
     window_size: int
     min_fill_threshold: int
-    normal_threshold: float = 5.0
-    medium_threshold: float = 10.0
 
 
 @dataclass
@@ -26,15 +25,23 @@ class TreeState:
     indices: deque
     is_warm: bool
     min_fill_threshold: int
+    z_score: float
+    score_count: int
+    stats: Stats
 
 
 class AnomalyDetector:
-    def __init__(self, config: dict):
+    def __init__(self, config):
         self.config = config
-        self.forest = {}
         
-        self.normal_threshold = config.get("normal_threshold", 5.0)
-        self.medium_threshold = config.get("medium_threshold", 10.0)
+        if isinstance(config, dict):
+            self.window_size = config["window_size"]
+            self.min_fill_threshold = config["min_fill_threshold"]
+        else:
+            self.window_size = config.window_size
+            self.min_fill_threshold = config.min_fill_threshold
+        
+        self.forest = {}
 
     def ingest_data(self, data: NormalizedVectorDto):
         self._create_tree_if_absent(data)
@@ -55,8 +62,18 @@ class AnomalyDetector:
         if not tree_state.is_warm:
             return None
 
-        score = self.scoreCoDisp(get_instrument_key(data), index=index)
-        return score
+        raw_score = self.scoreCoDisp(get_instrument_key(data), index=index)
+        update_stats(tree_state, raw_score)
+
+        return {
+            "raw_score": raw_score,
+            "z_score": tree_state.z_score,
+            "stats": {
+                "mean": tree_state.stats.mean,
+                "std": tree_state.stats.std,
+                "count": tree_state.score_count,
+            }
+        }
 
     def evict(self, tree_key: str):
         tree_state: TreeState = self.forest[tree_key]
@@ -94,13 +111,16 @@ class AnomalyDetector:
         if not self._has_tree(get_instrument_key(data)):
             tree = TreeState(
                 tree=rrcf.RCTree(),
-                max_size=self.config["window_size"],
+                max_size=self.window_size,
                 current_size=0,
                 next_index=0,
                 oldest_index=0,
-                indices=deque(maxlen=self.config["window_size"]),
+                indices=deque(maxlen=self.window_size),
+                z_score=0,
+                score_count=0,
+                stats=Stats(0, 0, 0),
                 is_warm=False,
-                min_fill_threshold=self.config["min_fill_threshold"],
+                min_fill_threshold=self.min_fill_threshold,
             )
             self.forest[get_instrument_key(data)] = tree
 
@@ -124,10 +144,16 @@ class AnomalyDetector:
     def get_tree_count(self) -> int:
         return len(self.forest)
 
-    def determine_alert_level(self, score: float) -> str:
-        if score < self.normal_threshold:
+    def determine_alert_level(self, z_score: float) -> str:
+        """
+        Adaptive alert level based on z-score (standard deviations from mean).
+        Uses 3-sigma rule: z > 3 means 99.7% outlier.
+        """
+        abs_z = abs(z_score)
+        
+        if abs_z < 2.0:
             return "normal"
-        elif score < self.medium_threshold:
+        elif abs_z < 3.0:
             return "medium"
         else:
             return "high"

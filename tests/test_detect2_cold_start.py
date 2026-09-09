@@ -82,10 +82,11 @@ class TestColdStartSuppression:
             detector_small.ingest_data(sample_vector)
 
         # Threshold-th point should return a score
-        score = detector_small.ingest_data(sample_vector)
-        assert score is not None, f"Expected score at threshold ({threshold}), got None"
-        assert isinstance(score, (int, float))
-        assert score >= 0
+        result = detector_small.ingest_data(sample_vector)
+        assert result is not None, f"Expected score at threshold ({threshold}), got None"
+        assert isinstance(result, dict)
+        assert "raw_score" in result
+        assert result["raw_score"] >= 0
 
     def test_returns_score_after_threshold(self, detector_small, sample_vector):
         """ingest_data should continue returning scores after threshold."""
@@ -97,9 +98,10 @@ class TestColdStartSuppression:
 
         # Insert 10 more points, all should return scores
         for i in range(10):
-            score = detector_small.ingest_data(sample_vector)
-            assert score is not None, f"Expected score at point {threshold + i + 1}, got None"
-            assert isinstance(score, (int, float))
+            result = detector_small.ingest_data(sample_vector)
+            assert result is not None, f"Expected score at point {threshold + i + 1}, got None"
+            assert isinstance(result, dict)
+            assert "raw_score" in result
 
     def test_large_threshold_suppresses_longer(self, detector_large, sample_vector):
         """Larger threshold should suppress scores for more points."""
@@ -112,9 +114,10 @@ class TestColdStartSuppression:
             assert score is None, f"Expected None at point {i+1}/29"
 
         # 30th point should return score
-        score = detector_large.ingest_data(sample_vector)
-        assert score is not None
-        assert isinstance(score, (int, float))
+        result = detector_large.ingest_data(sample_vector)
+        assert result is not None
+        assert isinstance(result, dict)
+        assert "raw_score" in result
 
 
 class TestWarmFlagTransition:
@@ -321,11 +324,12 @@ class TestColdStartEdgeCases:
             session_fallback_flag=0,
         )
 
-        score = detector.ingest_data(vector)
-        
+        result = detector.ingest_data(vector)
+
         # Should return a score immediately (threshold=1)
-        assert score is not None
-        assert isinstance(score, (int, float))
+        assert result is not None
+        assert isinstance(result, dict)
+        assert "raw_score" in result
 
         tree_state: TreeState = detector.forest["binance:crypto_spot"]
         assert tree_state.is_warm is True

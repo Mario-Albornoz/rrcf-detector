@@ -10,8 +10,6 @@ from typing import Optional
 class DetectorConfig:
     window_size: int = 1000
     min_fill_threshold: int = 50
-    normal_threshold: float = 5.0
-    medium_threshold: float = 10.0
 
 
 @dataclass
@@ -77,8 +75,6 @@ class ServiceConfig:
         detector_config = DetectorConfig(
             window_size=config_dict.get("rrcf_window_size", 1000),
             min_fill_threshold=config_dict.get("min_fill_threshold", 50),
-            normal_threshold=config_dict.get("normal_threshold", 5.0),
-            medium_threshold=config_dict.get("medium_threshold", 10.0),
         )
         
         kafka_config = KafkaConfig(

@@ -197,10 +197,14 @@ class TestInsertScoreRoundtrip:
 
     def test_score_returned_after_insert(self, detector, sample_vector):
         """ingest_data should return a score."""
-        score = detector.ingest_data(sample_vector)
+        result = detector.ingest_data(sample_vector)
         
-        assert isinstance(score, (int, float))  # Accept both int and float
-        assert score >= 0  # CoDisp scores are non-negative
+        assert isinstance(result, dict)
+        assert "raw_score" in result
+        assert "z_score" in result
+        assert "stats" in result
+        assert isinstance(result["raw_score"], (int, float))
+        assert result["raw_score"] >= 0
 
     def test_normal_points_have_similar_scores(self, detector):
         """Similar points should have similar (low) anomaly scores."""
@@ -223,8 +227,8 @@ class TestInsertScoreRoundtrip:
                 warmup_flag=0,
                 session_fallback_flag=0,
             )
-            score = detector.ingest_data(vector)
-            scores.append(score)
+            result = detector.ingest_data(vector)
+            scores.append(result["raw_score"])
 
         # All scores should be relatively low and similar
         # (exact values depend on RRCF internals, but should be < 10 for normal points)
@@ -272,7 +276,7 @@ class TestInsertScoreRoundtrip:
         anomaly_score = detector.ingest_data(anomaly_vector)
 
         # Anomaly should have higher score than normal points
-        assert anomaly_score > normal_score
+        assert anomaly_score["raw_score"] > normal_score["raw_score"]
 
 
 class TestMemoryManagement:

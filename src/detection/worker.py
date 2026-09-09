@@ -15,7 +15,7 @@ class Worker:
         kafka_config: dict,
     ):
         self.worker_id = worker_id
-        self.config = config
+        self.config: AnomalyDetectorConfig = config
         self.input_queue = input_queue
         self.kafka_config = kafka_config
 
@@ -40,10 +40,10 @@ class Worker:
                 if vector is None:
                     break
 
-                score = self.detector.ingest_data(vector)
+                result = self.detector.ingest_data(vector)
 
-                if score is not None:
-                    alert_level = self.detector.determine_alert_level(score)
+                if result is not None:
+                    alert_level = self.detector.determine_alert_level(result["z_score"])
 
                     score_output = {
                         "exchange": vector.exchange,
@@ -52,8 +52,12 @@ class Worker:
                         "timestamp": vector.timestamp.isoformat(),
                         "timestamp_ms": int(vector.timestamp.timestamp() * 1000),
                         "model": "rrcf",
-                        "raw_score": score,
+                        "raw_score": result["raw_score"],
+                        "z_score": result["z_score"],
                         "alert_level": alert_level,
+                        "stats_mean": result["stats"]["mean"],
+                        "stats_std": result["stats"]["std"],
+                        "stats_count": result["stats"]["count"],
                         "worker_id": self.worker_id,
                     }
 
