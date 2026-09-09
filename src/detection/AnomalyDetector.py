@@ -33,14 +33,14 @@ class TreeState:
 class AnomalyDetector:
     def __init__(self, config):
         self.config = config
-        
+
         if isinstance(config, dict):
             self.window_size = config["window_size"]
             self.min_fill_threshold = config["min_fill_threshold"]
         else:
             self.window_size = config.window_size
             self.min_fill_threshold = config.min_fill_threshold
-        
+
         self.forest = {}
 
     def ingest_data(self, data: NormalizedVectorDto):
@@ -72,7 +72,7 @@ class AnomalyDetector:
                 "mean": tree_state.stats.mean,
                 "std": tree_state.stats.std,
                 "count": tree_state.score_count,
-            }
+            },
         }
 
     def evict(self, tree_key: str):
@@ -150,7 +150,7 @@ class AnomalyDetector:
         Uses 3-sigma rule: z > 3 means 99.7% outlier.
         """
         abs_z = abs(z_score)
-        
+
         if abs_z < 2.0:
             return "normal"
         elif abs_z < 3.0:

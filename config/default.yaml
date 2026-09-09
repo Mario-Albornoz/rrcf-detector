@@ -1,0 +1,34 @@
+# RRCF Anomaly Detection Service Configuration
+
+service:
+  num_workers: 4
+  queue_max_size: 10000
+  log_level: "INFO"
+
+detector:
+  window_size: 1000
+  min_fill_threshold: 50
+
+kafka:
+  # Connection
+  bootstrap_servers: "localhost:9092"
+  
+  # Topics
+  input_topic: "normalized-features"
+  output_topic: "anomaly-scores"
+  
+  # Consumer settings
+  consumer_group_id: "rrcf-detector-consumer"
+  auto_offset_reset: "earliest"
+  enable_auto_commit: true
+  auto_commit_interval_ms: 5000
+  session_timeout_ms: 30000
+  max_poll_records: 500
+  
+  # Producer settings
+  client_id: "rrcf-detector-producer"
+  linger_ms: 10
+  batch_size: 65536
+  compression_type: "lz4"
+  acks: 1
+  retries: 3

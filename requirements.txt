@@ -9,6 +9,15 @@ ciso8601==2.3.1
 numpy==2.5.2
 rrcf==0.4.4
 
+# Configuration
+pyyaml==6.0.2
+
+# Data analysis and evaluation
+pandas==2.2.3
+scikit-learn==1.5.2
+matplotlib==3.9.2
+seaborn==0.13.2
+
 # Redis (for score ledger)
 redis==5.2.0
 

@@ -13,6 +13,36 @@ from confluent_kafka import Consumer, KafkaError, KafkaException
 from .metrics import KafkaMetrics
 
 
+def deserialize_vector(msg) -> Optional["NormalizedVectorDto"]:
+    """
+    Deserialize Kafka message to NormalizedVectorDto.
+    Standalone helper for manual consumer loops.
+    """
+    try:
+        data = orjson.loads(msg.value().decode("utf-8"))
+        timestamp = ciso8601.parse_datetime(data["timestamp"])
+
+        return NormalizedVectorDto(
+            exchange=data["exchange"],
+            instrument=data["instrument"],
+            instrument_class=data["class"],
+            timestamp=timestamp,
+            model_key=data["model_key"],
+            z_intertick_fast=data["z_intertick_fast"],
+            z_price_step_fast=data["z_price_step_fast"],
+            z_intertick_slow=data["z_intertick_slow"],
+            z_price_step_slow=data["z_price_step_slow"],
+            cusum_intertick=data["cusum_intertick"],
+            cusum_price_step=data["cusum_price_step"],
+            gap_flag=data["gap_flag"],
+            warmup_flag=data["warmup_flag"],
+            session_fallback_flag=data["session_fallback_flag"],
+        )
+    except (json.JSONDecodeError, KeyError, ValueError) as e:
+        print(f"Failed to deserialize message: {e}", file=sys.stderr)
+        return None
+
+
 @dataclass
 class NormalizedVectorDto:
     exchange: str
