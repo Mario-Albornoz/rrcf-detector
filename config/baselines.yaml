@@ -1,0 +1,47 @@
+# Baseline Configuration
+
+# Shared settings for all baseline models
+detector:
+  # RRCF & HST: Window-based settings
+  window_size: 1000
+  min_fill_threshold: 50
+  
+  # Z-Score & IsoForest: Training phase settings
+  training_samples: 20000  # ~2 weeks at 3000 msg/sec
+  
+  # IsoForest specific
+  n_estimators: 100
+  contamination: 0.1
+  
+  # HST specific
+  n_trees: 25
+  height: 8
+
+# Kafka settings (same as default.yaml)
+kafka:
+  bootstrap_servers: "localhost:9092"
+  consumer_group_id: "rrcf-detector-baselines"
+  input_topic: "normalized-features"
+  output_topic: "anomaly-scores"
+  auto_offset_reset: "earliest"
+  
+  # Producer settings
+  producer:
+    linger_ms: 10
+    batch_size: 100000
+    compression_type: "lz4"
+    acks: 1
+    retries: 3
+
+# Multiprocessing
+multiprocessing:
+  num_workers: 4  # One worker per model (or scale per model)
+  health_check_interval: 30
+
+# Model Selection
+# To run specific models, modify this list
+models:
+  - rrcf
+  - zscore
+  - isoforest
+  - halfspace
