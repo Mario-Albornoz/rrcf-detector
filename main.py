@@ -45,7 +45,7 @@ class ServiceRunner:
             "enable.auto.commit": kafka_config.enable_auto_commit,
             "auto.commit.interval.ms": kafka_config.auto_commit_interval_ms,
             "session.timeout.ms": kafka_config.session_timeout_ms,
-            "max.poll.records": kafka_config.max_poll_records,
+            # Note: max.poll.records is Java-only; librdkafka uses poll(timeout) instead
         }
 
         self.consumer = Consumer(consumer_config)

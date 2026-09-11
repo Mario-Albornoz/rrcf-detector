@@ -27,12 +27,12 @@ Complete guide for running, testing, and evaluating the RRCF anomaly detector.
 
 The service expects these Kafka topics to exist:
 
-- `normalized-features` (input) - Feature vectors from Go aggregator
+- `normalized-vectors` (input) - Feature vectors from Go aggregator
 - `anomaly-scores` (output) - Anomaly detection results
 
 Create topics:
 ```bash
-kafka-topics.sh --create --topic normalized-features \\
+kafka-topics.sh --create --topic normalized-vectors \\
     --bootstrap-server localhost:9092 \\
     --partitions 4 --replication-factor 1
 
@@ -85,7 +85,7 @@ detector:
 
 kafka:
   bootstrap_servers: "localhost:9092"
-  input_topic: "normalized-features"
+  input_topic: "normalized-vectors"
   output_topic: "anomaly-scores"
   consumer_group_id: "rrcf-detector-consumer"
 ```
@@ -126,7 +126,7 @@ python main.py --config config/experiment_001.yaml
 ============================================================
 RRCF Anomaly Detection Service
 ============================================================
-[Service] Subscribed to topic: normalized-features
+[Service] Subscribed to topic: normalized-vectors
 [Partitioner] Starting 4 workers...
 [Partitioner] Worker 0 started (PID: 12345)
 [Partitioner] Worker 1 started (PID: 12346)
@@ -181,7 +181,7 @@ After running a simulation, collect data for analysis:
 
 ```bash
 python scripts/collect_data.py \\
-    --input-topic normalized-features \\
+    --input-topic normalized-vectors \\
     --output-topic anomaly-scores \\
     --output-dir ./data/run_001 \\
     --bootstrap-servers localhost:9092
@@ -312,7 +312,7 @@ python scripts/evaluate_model.py \\
 2. **Messages in topic:**
    ```bash
    kafka-console-consumer.sh --bootstrap-server localhost:9092 \\
-       --topic normalized-features --from-beginning --max-messages 1
+       --topic normalized-vectors --from-beginning --max-messages 1
    ```
 
 3. **Consumer group offset:**
@@ -354,7 +354,6 @@ detector:
   window_size: 500  # Smaller window = less CPU per message
 
 kafka:
-  max_poll_records: 1000  # Larger batches
   compression_type: "lz4"  # Fast compression
 ```
 
@@ -365,18 +364,3 @@ detector:
   window_size: 2000  # Larger window captures longer patterns
   min_fill_threshold: 100  # More stable statistics
 ```
-
----
-
-## Next Steps
-
-1. **Baseline Models (DETECT-5):** Implement z-score, Isolation Forest, LSTM
-2. **Multi-Model Comparison:** Compare RRCF vs baselines
-3. **Production Deployment:** Add monitoring, logging, persistence
-
----
-
-## Questions?
-
-Check the project README or skill file:
-- `.cursor/skills/rrcf-detector-tasks/SKILL.md`

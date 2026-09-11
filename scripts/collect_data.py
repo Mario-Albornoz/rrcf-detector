@@ -7,7 +7,7 @@ for later evaluation. Useful after simulation runs to analyze detector performan
 
 Usage:
     python scripts/collect_data.py \\
-        --input-topic normalized-features \\
+        --input-topic normalized-vectors \\
         --output-topic anomaly-scores \\
         --output-dir ./data/run_001 \\
         --bootstrap-servers localhost:9092
@@ -98,7 +98,7 @@ def main():
     )
     parser.add_argument(
         "--input-topic",
-        default="normalized-features",
+        default="normalized-vectors",
         help="Input topic with feature vectors"
     )
     parser.add_argument(

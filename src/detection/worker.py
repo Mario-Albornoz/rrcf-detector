@@ -18,14 +18,23 @@ class Worker:
         self.config: AnomalyDetectorConfig = config
         self.input_queue = input_queue
         self.kafka_config = kafka_config
+        
+        # Extract output_topic from kafka_config (not a producer property)
+        self.output_topic = kafka_config.get("output_topic", "anomaly-scores")
 
         self.detector: Optional[AnomalyDetector] = None
         self.publisher: Optional[AlertProducer] = None
         self.running = False
 
     def run(self):
+        # Build producer config without output_topic
+        producer_config = {
+            k: v for k, v in self.kafka_config.items() 
+            if k != "output_topic"
+        }
+        
         self.detector = AnomalyDetector(config=self.config)
-        self.publisher = AlertProducer(config=self.kafka_config)
+        self.publisher = AlertProducer(config=producer_config)
 
         signal.signal(signal.SIGTERM, self._shutdown_handler)
         signal.signal(signal.SIGINT, self._shutdown_handler)
@@ -62,7 +71,7 @@ class Worker:
                     }
 
                     self.publisher.publish(
-                        topic=self.kafka_config["output_topic"], message=score_output
+                        topic=self.output_topic, message=score_output
                     )
 
             except Exception as e:

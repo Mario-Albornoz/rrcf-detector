@@ -21,7 +21,7 @@ detector:
 kafka:
   bootstrap_servers: "localhost:9092"
   consumer_group_id: "rrcf-detector-baselines"
-  input_topic: "normalized-features"
+  input_topic: "normalized-vectors"
   output_topic: "anomaly-scores"
   auto_offset_reset: "earliest"
   

@@ -25,7 +25,6 @@ Consumer settings:
 - `consumer_group_id`: Consumer group identifier
 - `auto_offset_reset`: Where to start consuming (earliest/latest)
 - `enable_auto_commit`: Auto-commit offsets
-- `max_poll_records`: Batch size for consumption
 
 Producer settings:
 - `linger_ms`: Batching delay for producer

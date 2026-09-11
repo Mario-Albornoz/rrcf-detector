@@ -33,12 +33,12 @@ class Partitioner:
             )
 
             kafka_config = {
-                "bootstrap_servers": self.config.kafka_config.bootstrap_servers,
+                "bootstrap.servers": self.config.kafka_config.bootstrap_servers,
                 "output_topic": self.config.kafka_config.output_topic,
-                "client_id": f"{self.config.kafka_config.client_id}-{worker_id}",
-                "linger_ms": self.config.kafka_config.linger_ms,
-                "batch_size": self.config.kafka_config.batch_size,
-                "compression_type": self.config.kafka_config.compression_type,
+                "client.id": f"{self.config.kafka_config.client_id}-{worker_id}",
+                "linger.ms": self.config.kafka_config.linger_ms,
+                "batch.size": self.config.kafka_config.batch_size,
+                "compression.type": self.config.kafka_config.compression_type,
                 "acks": self.config.kafka_config.acks,
                 "retries": self.config.kafka_config.retries,
             }
@@ -129,9 +129,9 @@ class Partitioner:
         )
 
         kafka_config = {
-            "bootstrap_servers": self.config.kafka_config.bootstrap_servers,
+            "bootstrap.servers": self.config.kafka_config.bootstrap_servers,
             "output_topic": self.config.kafka_config.output_topic,
-            "client_id": f"{self.config.kafka_config.client_id}-{worker_id}",
+            "client.id": f"{self.config.kafka_config.client_id}-{worker_id}",
         }
 
         new_process = Worker.start_worker(

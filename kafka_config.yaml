@@ -24,15 +24,8 @@ kafka:
     queue_buffering_max_kbytes: 1048576
     
   topics:
-    input: normalized-features
+    input: normalized-vectors
     output: anomaly-scores
-
-redis:
-  host: localhost
-  port: 6379
-  db: 0
-  password: null
-  socket_timeout: 5
 
 service:
   num_workers: 4
