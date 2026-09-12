@@ -93,7 +93,7 @@ class AlertProducer:
             "exchange": alert["exchange"],
             "instrument": alert["instrument"],
             "instrument_class": alert["instrument_class"],
-            "timestamp": alert["timeStamp"],
+            "timestamp": alert["timestamp"],
             "alert_type": alert["alert_type"],
         }
         return orjson.dumps(message)

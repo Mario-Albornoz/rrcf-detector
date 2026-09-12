@@ -18,8 +18,7 @@ class Worker:
         self.config: AnomalyDetectorConfig = config
         self.input_queue = input_queue
         self.kafka_config = kafka_config
-        
-        # Extract output_topic from kafka_config (not a producer property)
+
         self.output_topic = kafka_config.get("output_topic", "anomaly-scores")
 
         self.detector: Optional[AnomalyDetector] = None
@@ -27,12 +26,10 @@ class Worker:
         self.running = False
 
     def run(self):
-        # Build producer config without output_topic
         producer_config = {
-            k: v for k, v in self.kafka_config.items() 
-            if k != "output_topic"
+            k: v for k, v in self.kafka_config.items() if k != "output_topic"
         }
-        
+
         self.detector = AnomalyDetector(config=self.config)
         self.publisher = AlertProducer(config=producer_config)
 
@@ -64,6 +61,7 @@ class Worker:
                         "raw_score": result["raw_score"],
                         "z_score": result["z_score"],
                         "alert_level": alert_level,
+                        "alert_type": f"anomaly_{alert_level}",
                         "stats_mean": result["stats"]["mean"],
                         "stats_std": result["stats"]["std"],
                         "stats_count": result["stats"]["count"],

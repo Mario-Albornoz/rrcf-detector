@@ -21,6 +21,10 @@ def deserialize_vector(msg) -> Optional["NormalizedVectorDto"]:
     try:
         data = orjson.loads(msg.value().decode("utf-8"))
         timestamp = ciso8601.parse_datetime(data["timestamp"])
+        
+        # Filter out invalid timestamps (year 0 from aggregator)
+        if timestamp is None or timestamp.year == 0:
+            return None
 
         return NormalizedVectorDto(
             exchange=data["exchange"],
@@ -134,6 +138,10 @@ class NormalizedVectorConsumer:
             data = orjson.loads(msg.value().decode("utf-8"))
 
             timestamp = ciso8601.parse_datetime(data["timestamp"])
+            
+            # Filter out invalid timestamps (year 0 from aggregator)
+            if timestamp is None or timestamp.year == 0:
+                return None
 
             return NormalizedVectorDto(
                 exchange=data["exchange"],
