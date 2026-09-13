@@ -2,7 +2,7 @@
 
 # Shared settings for all baseline models
 detector:
-  # RRCF & HST: Window-based settings
+  # RRCF & HST & Online-iForest: Window-based settings
   window_size: 1000
   min_fill_threshold: 50
   
@@ -16,6 +16,14 @@ detector:
   # HST specific
   n_trees: 25
   height: 8
+  
+  # Online-iForest specific (ICML 2024 paper defaults)
+  onlineiforest:
+    window_size: 1024        # Sliding window size
+    num_trees: 32            # Number of trees in forest
+    max_leaf_samples: 32     # Max samples per leaf before split
+    type: "adaptive"         # "adaptive" or "fixed"
+    min_fill_threshold: 50   # Warmup samples before scoring
 
 # Kafka settings (same as default.yaml)
 kafka:
@@ -45,3 +53,4 @@ models:
   - zscore
   - isoforest
   - halfspace
+  - onlineiforest
