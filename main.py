@@ -1,3 +1,4 @@
+# TODO: Optimize the detection service it stands at 300 messages/s tops
 """
 RRCF Anomaly Detection Service - Main Entry Point
 
