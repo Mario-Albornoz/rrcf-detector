@@ -22,7 +22,16 @@ class AnomalyAlertDto:
 class AlertProducer:
 
     def __init__(self, config: dict, metrics_report_interval: int = 5):
-        self.producer = Producer(config)
+        # Extract topic names if present (not valid Kafka producer configs)
+        producer_config = {k: v for k, v in config.items() 
+                          if k not in ['input_topic', 'output_topic', 'consumer_group_id', 
+                                      'auto_offset_reset', 'producer']}
+        
+        # If there's a nested 'producer' config, merge those settings
+        if 'producer' in config:
+            producer_config.update(config['producer'])
+        
+        self.producer = Producer(producer_config)
 
         self.metrics = KafkaMetrics().producer
         self.metrics_report_interval = metrics_report_interval
