@@ -54,3 +54,11 @@ models:
   - isoforest
   - halfspace
   - onlineiforest
+
+# Stream Collector Configuration
+stream_collector:
+  output_file: "./data/scores.parquet"
+  buffer_size: 1000
+  flush_interval: 5  # seconds
+  bootstrap_servers: "localhost:9092"
+  topic: "anomaly-scores"

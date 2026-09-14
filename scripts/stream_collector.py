@@ -11,22 +11,21 @@ Key Features:
 - Incremental parquet writes with pyarrow
 - Graceful shutdown with buffer flush
 - Progress monitoring
+- Configuration via YAML (consistent with other services)
 
 Usage:
-    # Terminal 1: Start detection service
-    python main.py --config config/baselines.yaml
+    # With default config (config/baselines.yaml)
+    python scripts/stream_collector.py
     
-    # Terminal 2: Start stream collector (parallel)
-    python scripts/stream_collector.py \\
-        --output-file ./data/run_001/scores.parquet \\
-        --buffer-size 1000 \\
-        --flush-interval 5
+    # With custom config
+    python scripts/stream_collector.py --config config/production.yaml
     
-    # Terminal 3: Run feed simulator
-    python simulator.py
-    
-    # After stopping: evaluate immediately
-    python scripts/evaluate_model.py --data-file ./data/run_001/scores.parquet
+    # CLI args override config (for testing)
+    python scripts/stream_collector.py --output-file ./data/test/scores.parquet
+
+Configuration:
+    All settings in config YAML under 'stream_collector' key.
+    See config/baselines.yaml for example.
 
 Architecture:
     Kafka Topic "anomaly-scores"
@@ -45,11 +44,13 @@ import signal
 import sys
 import time
 from datetime import datetime
+from pathlib import Path
 from typing import Dict, List, Optional
 
 import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
+import yaml
 from confluent_kafka import Consumer, KafkaError, KafkaException
 
 
@@ -306,75 +307,121 @@ class StreamCollector:
         print("=" * 60)
 
 
+def load_config(config_path: str) -> dict:
+    """Load configuration from YAML file."""
+    if not os.path.exists(config_path):
+        raise FileNotFoundError(f"Config file not found: {config_path}")
+    
+    with open(config_path, 'r') as f:
+        config = yaml.safe_load(f)
+    
+    if 'stream_collector' not in config:
+        raise ValueError(
+            f"Config file missing 'stream_collector' section: {config_path}\n"
+            "Add stream_collector configuration to your YAML file."
+        )
+    
+    return config['stream_collector']
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Streaming parquet collector for anomaly scores",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Basic usage
-  python scripts/stream_collector.py --output-file ./data/run_001/scores.parquet
+  # Use default config
+  python scripts/stream_collector.py
   
-  # Custom buffer and flush settings
-  python scripts/stream_collector.py \\
-      --output-file ./data/run_001/scores.parquet \\
-      --buffer-size 2000 \\
-      --flush-interval 10
+  # Use custom config
+  python scripts/stream_collector.py --config config/production.yaml
   
-  # Custom Kafka settings
-  python scripts/stream_collector.py \\
-      --output-file ./data/run_001/scores.parquet \\
-      --bootstrap-servers kafka:9092 \\
-      --topic custom-scores-topic
+  # Override output file from config
+  python scripts/stream_collector.py --output-file ./data/test/scores.parquet
+
+Configuration:
+  Settings are read from YAML config file under 'stream_collector' key.
+  Default config: config/baselines.yaml
+  
+  Example config:
+    stream_collector:
+      output_file: "./data/scores.parquet"
+      buffer_size: 1000
+      flush_interval: 5
+      bootstrap_servers: "localhost:9092"
+      topic: "anomaly-scores"
+  
+  CLI arguments override config values.
 """
     )
     
     parser.add_argument(
+        "--config",
+        default="config/baselines.yaml",
+        help="Path to YAML config file (default: config/baselines.yaml)"
+    )
+    parser.add_argument(
         "--output-file",
-        required=True,
-        help="Path to output parquet file (will be created/overwritten)"
+        help="Override output file from config"
     )
     parser.add_argument(
         "--bootstrap-servers",
-        default="localhost:9092",
-        help="Kafka bootstrap servers (default: localhost:9092)"
+        help="Override Kafka bootstrap servers from config"
     )
     parser.add_argument(
         "--topic",
-        default="anomaly-scores",
-        help="Kafka topic to consume from (default: anomaly-scores)"
+        help="Override Kafka topic from config"
     )
     parser.add_argument(
         "--buffer-size",
         type=int,
-        default=1000,
-        help="Number of messages to buffer before flush (default: 1000)"
+        help="Override buffer size from config"
     )
     parser.add_argument(
         "--flush-interval",
         type=int,
-        default=5,
-        help="Seconds between forced flushes (default: 5)"
+        help="Override flush interval from config"
     )
     
     args = parser.parse_args()
     
-    # Validate arguments
-    if args.buffer_size < 1:
-        print("Error: buffer-size must be >= 1", file=sys.stderr)
+    # Load config from YAML
+    try:
+        config = load_config(args.config)
+        print(f"✓ Loaded config from {args.config}")
+    except Exception as e:
+        print(f"✗ Error loading config: {e}", file=sys.stderr)
         sys.exit(1)
     
-    if args.flush_interval < 1:
-        print("Error: flush-interval must be >= 1", file=sys.stderr)
+    # CLI args override config
+    output_file = args.output_file or config.get('output_file')
+    bootstrap_servers = args.bootstrap_servers or config.get('bootstrap_servers', 'localhost:9092')
+    topic = args.topic or config.get('topic', 'anomaly-scores')
+    buffer_size = args.buffer_size or config.get('buffer_size', 1000)
+    flush_interval = args.flush_interval or config.get('flush_interval', 5)
+    
+    # Validate required settings
+    if not output_file:
+        print("✗ Error: output_file not specified in config or CLI", file=sys.stderr)
         sys.exit(1)
+    
+    if buffer_size < 1:
+        print("✗ Error: buffer_size must be >= 1", file=sys.stderr)
+        sys.exit(1)
+    
+    if flush_interval < 1:
+        print("✗ Error: flush_interval must be >= 1", file=sys.stderr)
+        sys.exit(1)
+    
+    print()
     
     # Create and start collector
     collector = StreamCollector(
-        bootstrap_servers=args.bootstrap_servers,
-        topic=args.topic,
-        output_file=args.output_file,
-        buffer_size=args.buffer_size,
-        flush_interval=args.flush_interval,
+        bootstrap_servers=bootstrap_servers,
+        topic=topic,
+        output_file=output_file,
+        buffer_size=buffer_size,
+        flush_interval=flush_interval,
     )
     
     collector.start()
