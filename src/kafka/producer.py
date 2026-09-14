@@ -15,6 +15,7 @@ class AnomalyAlertDto:
     instrument: str
     instrument_class: str
     timestamp: datetime
+    raw_score: float
     alert_type: str
 
 
@@ -94,6 +95,7 @@ class AlertProducer:
             "instrument": alert["instrument"],
             "instrument_class": alert["instrument_class"],
             "timestamp": alert["timestamp"],
+            "raw_score": alert["raw_score"],
             "alert_type": alert["alert_type"],
         }
         return orjson.dumps(message)
