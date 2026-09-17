@@ -52,7 +52,9 @@ class AlertProducer:
             self._maybe_report_metrics()
 
         except Exception as e:
+            import traceback
             print(f"Error publishing alert: {e}")
+            print(traceback.format_exc())
             self.metrics.record_failure()
 
     def publish_batch(self, topic: str, alerts: List[dict]):
@@ -99,15 +101,10 @@ class AlertProducer:
         return queued
 
     def _serialize_alert(self, alert: dict) -> bytes:
-        message = {
-            "exchange": alert["exchange"],
-            "instrument": alert["instrument"],
-            "instrument_class": alert["instrument_class"],
-            "timestamp": alert["timestamp"],
-            "raw_score": alert["raw_score"],
-            "alert_type": alert["alert_type"],
-        }
-        return orjson.dumps(message)
+        # Pass through all fields from the alert
+        # This supports both old format (alert_type) and new format (alert_level, model, z_score, etc.)
+        # OPT_SERIALIZE_NUMPY: handle numpy.float64 and other numpy types automatically
+        return orjson.dumps(alert, option=orjson.OPT_SERIALIZE_NUMPY)
 
     def _make_key(self, alert: dict) -> bytes:
         return f"{alert["exchange"]}:{alert["instrument"]}:{alert["instrument_class"]}".encode(

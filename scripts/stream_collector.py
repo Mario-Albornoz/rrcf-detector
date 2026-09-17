@@ -131,11 +131,42 @@ class StreamCollector:
             print(f"⚠ Failed to decode message: {e}")
             return None
     
-    def _infer_schema(self, df: pd.DataFrame) -> pa.Schema:
-        """Infer pyarrow schema from first batch."""
-        # Convert pandas dtypes to pyarrow types
-        table = pa.Table.from_pandas(df)
-        return table.schema
+    def _create_schema(self) -> pa.Schema:
+        """Create explicit pyarrow schema to avoid type inference issues.
+        
+        Field order MUST match the order in which generic_worker.py creates score_output dict.
+        """
+        return pa.schema([
+            # Core identifiers
+            ("exchange", pa.string()),
+            ("instrument", pa.string()),
+            ("instrument_class", pa.string()),
+            
+            # Timestamps
+            ("timestamp", pa.string()),  # ISO format string
+            ("timestamp_ms", pa.int64()),
+            
+            # Model info
+            ("model", pa.string()),
+            
+            # Scores (always float64 to avoid truncation)
+            ("raw_score", pa.float64()),
+            ("z_score", pa.float64()),
+            ("alert_level", pa.string()),  # String: 'normal', 'medium', 'high', 'critical'
+            
+            # Statistics (always float64 to avoid truncation)
+            ("stats_mean", pa.float64()),
+            ("stats_std", pa.float64()),
+            ("stats_count", pa.int64()),
+            
+            # Worker info (comes after scores in the actual data)
+            ("worker_id", pa.int64()),
+            
+            # Kafka metadata
+            ("_kafka_offset", pa.int64()),
+            ("_kafka_partition", pa.int32()),
+            ("_kafka_timestamp", pa.int64()),
+        ])
     
     def _flush_buffer(self):
         """Flush buffered messages to parquet file."""
@@ -148,7 +179,7 @@ class StreamCollector:
             
             # Initialize writer on first flush
             if self.writer is None:
-                self.schema = self._infer_schema(df)
+                self.schema = self._create_schema()
                 self.writer = pq.ParquetWriter(
                     self.output_file,
                     self.schema,

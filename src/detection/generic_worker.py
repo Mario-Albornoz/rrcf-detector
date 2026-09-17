@@ -76,7 +76,9 @@ class GenericWorker:
 
             except Exception as e:
                 if self.running:
+                    import traceback
                     print(f"[Worker {self.worker_id}] Error: {e}")
+                    print(traceback.format_exc())
 
         print(f"[Worker {self.worker_id}] Shutting down ({model_name})")
 

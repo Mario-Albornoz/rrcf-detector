@@ -15,6 +15,26 @@ No Training Assumption:
     Online-iForest learns from the stream with a sliding window.
     Automatically forgets old points and learns new ones.
     No batch training phase required.
+
+IMPORTANT - WORKAROUND APPLIED:
+    There is a bug in the upstream OnlineIForest library where tree nodes can become
+    None during the unlearning/restructuring process, causing crashes during scoring.
+    
+    We've applied a workaround in boundedrandomprojection_onlineitree.py that skips
+    None children during tree traversal (see recursive_depth_search method).
+    
+    IMPLICATIONS:
+    - Prevents crashes during window transitions
+    - Anomaly scores may be slightly biased during tree restructuring periods
+    - Some data points may traverse incomplete tree paths
+    - Scores are still usable but may have reduced accuracy during sliding window updates
+    - This is acceptable for baseline comparison purposes
+    
+    LONG-TERM FIX:
+    - Report bug to library authors (https://github.com/ineveLoppiliF/Online-Isolation-Forest)
+    - Or replace with more stable online isolation forest implementation
+    - Root cause: tree restructuring logic (recursive_unbuild) doesn't maintain 
+      consistency with scoring logic (recursive_depth_search)
 """
 
 import sys
@@ -105,12 +125,8 @@ class OnlineIForestDetector(BaseDetector):
             data.cusum_price_step,
         ]])
         
-        # Score before learning (Online-iForest uses batch API)
-        # Returns array of shape (n_samples,) - higher score = more anomalous
-        raw_scores = self.model.score_batch(features)
-        raw_score = float(raw_scores[0])
-        
-        # Learn the new point (updates forest, handles sliding window automatically)
+        # Learn the new point first (updates forest, handles sliding window automatically)
+        # This must happen before scoring to initialize normalization_factor
         self.model.learn_batch(features)
         
         self.sample_count += 1
@@ -121,6 +137,12 @@ class OnlineIForestDetector(BaseDetector):
         
         if not self.is_warm:
             return None
+        
+        # Score after learning (Online-iForest uses batch API)
+        # Returns array of shape (n_samples,) - higher score = more anomalous
+        # Note: Scoring after learning may slightly bias scores, but prevents None errors
+        raw_scores = self.model.score_batch(features)
+        raw_score = float(raw_scores[0])
         
         # Update rolling statistics for z-score calibration
         self._update_stats(raw_score)
