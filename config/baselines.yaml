@@ -53,7 +53,7 @@ models:
   - zscore
   - isoforest
   - halfspace
-  - onlineiforest
+  # - onlineiforest  # Disabled: Too slow, cannot keep up with data rate
 
 # Stream Collector Configuration
 stream_collector:

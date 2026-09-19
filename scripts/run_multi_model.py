@@ -53,8 +53,9 @@ class MultiModelRunner:
     - Access to shared Kafka producer (output topic)
     """
 
-    def __init__(self, config: ServiceConfig):
+    def __init__(self, config: ServiceConfig, parquet_file: str = None):
         self.config = config
+        self.parquet_file = parquet_file or "./data/scores.parquet"
         self.models = (
             {}
         )  # {model_name: {"detector": class, "queue": Queue, "process": Process}}
@@ -157,11 +158,18 @@ class MultiModelRunner:
             }
 
             # Start worker process
+            # Each model writes to its own parquet file to avoid concurrent write corruption
+            model_parquet_file = None
+            if self.parquet_file:
+                base_dir = Path(self.parquet_file).parent
+                model_parquet_file = str(base_dir / f"scores_{model_name}.parquet")
+            
             process = GenericWorker.start_worker(
                 worker_id=0,  # Single worker per model
                 detector=detector,
                 input_queue=queue,
                 kafka_config=worker_kafka_config,
+                parquet_file=model_parquet_file,
             )
 
             model_info["process"] = process
@@ -197,6 +205,10 @@ class MultiModelRunner:
 
         message_count = 0
         last_report = time.time()
+        
+        # Track dropped messages per model
+        dropped_counts = {model_name: 0 for model_name in self.models.keys()}
+        total_dropped = 0
 
         try:
             while self.running:
@@ -218,22 +230,51 @@ class MultiModelRunner:
                     for model_name, model_info in self.models.items():
                         try:
                             model_info["queue"].put(vector, block=False)
-                        except Exception as e:
-                            print(f"⚠ Failed to route to {model_name}: {e}")
+                        except Exception:
+                            # Track dropped messages without spamming logs
+                            dropped_counts[model_name] += 1
+                            total_dropped += 1
 
                     message_count += 1
 
-                    # Progress report every 1000 messages
-                    if message_count % 1000 == 0:
+                    # Progress report every 10000 messages
+                    if message_count % 10000 == 0:
                         elapsed = time.time() - last_report
-                        rate = 1000 / elapsed if elapsed > 0 else 0
-                        print(
-                            f"Processed {message_count:,} messages | Rate: {rate:.0f} msg/s"
-                        )
+                        rate = 10000 / elapsed if elapsed > 0 else 0
+                        
+                        # Show aggregate drop stats
+                        drop_summary = " | ".join([
+                            f"{name}: {count:,} dropped" 
+                            for name, count in dropped_counts.items() 
+                            if count > 0
+                        ])
+                        
+                        if drop_summary:
+                            print(f"Processed {message_count:,} messages | Rate: {rate:.0f} msg/s | {drop_summary}")
+                        else:
+                            print(f"Processed {message_count:,} messages | Rate: {rate:.0f} msg/s | No drops")
+                        
                         last_report = time.time()
 
         except KeyboardInterrupt:
             print("\n⚠ Shutdown signal received")
+            print("\n" + "=" * 60)
+            print("Message Routing Statistics")
+            print("=" * 60)
+            print(f"Total messages processed: {message_count:,}")
+            print(f"Total messages dropped: {total_dropped:,}")
+            if total_dropped > 0:
+                drop_rate = (total_dropped / (message_count * len(self.models))) * 100
+                print(f"Drop rate: {drop_rate:.2f}%")
+                print("\nDrops by model:")
+                for model_name, count in sorted(dropped_counts.items(), key=lambda x: x[1], reverse=True):
+                    if count > 0:
+                        model_drop_rate = (count / message_count) * 100 if message_count > 0 else 0
+                        print(f"  {model_name:15s}: {count:,} ({model_drop_rate:.2f}% of messages)")
+            else:
+                print("No messages dropped!")
+            print("=" * 60)
+            print()
         except Exception as e:
             print(f"\n✗ Error in consumption loop: {e}")
             import traceback
@@ -324,6 +365,11 @@ Output:
         default="config/baselines.yaml",
         help="Path to YAML config file (default: config/baselines.yaml)",
     )
+    parser.add_argument(
+        "--output",
+        default="./data/scores.parquet",
+        help="Path to output parquet file (default: ./data/scores.parquet)",
+    )
     args = parser.parse_args()
 
     if not os.path.exists(args.config):
@@ -336,9 +382,10 @@ Output:
 
     service_config = ServiceConfig.from_dict(config_dict)
     print(f"✓ Loaded config from {args.config}")
+    print(f"✓ Output file: {args.output}")
     print()
 
-    runner = MultiModelRunner(service_config)
+    runner = MultiModelRunner(service_config, parquet_file=args.output)
     runner.start()
 
 
