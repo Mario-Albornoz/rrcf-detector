@@ -37,6 +37,7 @@ def deserialize_vector(msg) -> Optional["NormalizedVectorDto"]:
             gap_flag=data["gap_flag"],
             warmup_flag=data["warmup_flag"],
             session_fallback_flag=data["session_fallback_flag"],
+            seq=int(data.get("seq", 0)),
         )
     except (json.JSONDecodeError, KeyError, ValueError) as e:
         print(f"Failed to deserialize message: {e}", file=sys.stderr)
@@ -59,6 +60,9 @@ class NormalizedVectorDto:
     gap_flag: int
     warmup_flag: int
     session_fallback_flag: int
+    # Identifies the message the vector came from (0 if the producer sends none); it is
+    # written to the scores so the evaluation can match a score to an injected message.
+    seq: int = 0
 
 
 class NormalizedVectorConsumer:
@@ -150,6 +154,7 @@ class NormalizedVectorConsumer:
                 gap_flag=data["gap_flag"],
                 warmup_flag=data["warmup_flag"],
                 session_fallback_flag=data["session_fallback_flag"],
+                seq=int(data.get("seq", 0)),
             )
         except (json.JSONDecodeError, KeyError, ValueError) as e:
             print(f"Failed to deserialize message: {e}", file=sys.stderr)

@@ -58,6 +58,7 @@ class ParquetWriter:
                 ("stats_std", pa.float64()),
                 ("stats_count", pa.int64()),
                 ("worker_id", pa.int64()),
+                ("seq", pa.int64()),
             ]
         )
 
@@ -159,14 +160,17 @@ class GenericWorker:
         while self.running:
             try:
                 vector = self.input_queue.get(timeout=1.0)
+
+                # The shutdown sentinel must be checked before the stride: otherwise
+                # it is skipped 9 times out of 10 and the worker never exits.
+                if vector is None:
+                    break
+
                 self.messages_received += 1
                 message_count += 1
 
                 if message_count % stride != 0:
                     continue
-
-                if vector is None:
-                    break
 
                 self.messages_processed += 1
                 result = self.detector.ingest_data(vector)
@@ -188,6 +192,7 @@ class GenericWorker:
                         "stats_std": result["stats"]["std"],
                         "stats_count": result["stats"]["count"],
                         "worker_id": self.worker_id,
+                        "seq": int(getattr(vector, "seq", 0)),
                     }
 
                     if self.publisher:
