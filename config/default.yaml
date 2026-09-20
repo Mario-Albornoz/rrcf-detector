@@ -6,8 +6,8 @@ service:
   log_level: "INFO"
 
 detector:
-  window_size: 1000
-  min_fill_threshold: 50
+  window_size: 256
+  min_fill_threshold: 25
 
 kafka:
   # Connection

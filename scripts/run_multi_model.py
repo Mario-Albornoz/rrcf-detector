@@ -24,7 +24,9 @@ import sys
 import time
 from pathlib import Path
 
-# Add project root to Python path
+# Ignore SIGHUP to prevent termination when parent process exits
+signal.signal(signal.SIGHUP, signal.SIG_IGN)
+
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
@@ -82,7 +84,6 @@ class MultiModelRunner:
         """Initialize model configurations."""
         detector_config = self.config.partitioner_config.detector_config
 
-        # Define all 5 models with their detector classes
         model_configs = [
             (
                 "rrcf",
@@ -92,33 +93,33 @@ class MultiModelRunner:
                     "min_fill_threshold": detector_config.min_fill_threshold,
                 },
             ),
-            ("zscore", ZScoreDetector, {"training_samples": 20000}),
-            (
-                "isoforest",
-                IsolationForestDetector,
-                {"training_samples": 20000, "n_estimators": 100, "contamination": 0.1},
-            ),
-            (
-                "halfspace",
-                HalfSpaceTreesDetector,
-                {
-                    "window_size": detector_config.window_size,
-                    "n_trees": 25,
-                    "height": 8,
-                    "min_fill_threshold": detector_config.min_fill_threshold,
-                },
-            ),
-            (
-                "onlineiforest",
-                OnlineIForestDetector,
-                {
-                    "window_size": 1024,
-                    "num_trees": 32,
-                    "max_leaf_samples": 32,
-                    "type": "adaptive",
-                    "min_fill_threshold": detector_config.min_fill_threshold,
-                },
-            ),
+            # ("zscore", ZScoreDetector, {"training_samples": 20000}),
+            # (
+            #    "isoforest",
+            #    IsolationForestDetector,
+            #    {"training_samples": 20000, "n_estimators": 100, "contamination": 0.1},
+            # ),
+            # (
+            #    "halfspace",
+            #    HalfSpaceTreesDetector,
+            #    {
+            #        "window_size": detector_config.window_size,
+            #        "n_trees": 25,
+            #        "height": 8,
+            #        "min_fill_threshold": detector_config.min_fill_threshold,
+            #    },
+            # ),
+            # (
+            #    "onlineiforest",
+            #    OnlineIForestDetector,
+            #    {
+            #        "window_size": 1024,
+            #        "num_trees": 32,
+            #        "max_leaf_samples": 32,
+            #        "type": "adaptive",
+            #        "min_fill_threshold": detector_config.min_fill_threshold,
+            #    },
+            # ),
         ]
 
         print("Initializing models:")
@@ -138,17 +139,15 @@ class MultiModelRunner:
 
         print("Starting workers:")
         for model_name, model_info in self.models.items():
-            # Create input queue for this model
-            queue = mp.Queue(maxsize=1000)
+            queue = mp.Queue(maxsize=10000)
             model_info["queue"] = queue
 
-            # Initialize detector instance
             detector = model_info["detector_class"](model_info["config"])
 
-            # Build Kafka producer config for worker
+            # Disable Kafka publishing - only write to Parquet for thesis
             worker_kafka_config = {
                 "bootstrap.servers": kafka_config.bootstrap_servers,
-                "output_topic": kafka_config.output_topic,
+                "output_topic": None,  # DISABLED - only write to Parquet
                 "client.id": f"multi-model-{model_name}",
                 "linger.ms": kafka_config.linger_ms,
                 "batch.size": kafka_config.batch_size,
@@ -157,13 +156,11 @@ class MultiModelRunner:
                 "retries": kafka_config.retries,
             }
 
-            # Start worker process
-            # Each model writes to its own parquet file to avoid concurrent write corruption
             model_parquet_file = None
             if self.parquet_file:
                 base_dir = Path(self.parquet_file).parent
                 model_parquet_file = str(base_dir / f"scores_{model_name}.parquet")
-            
+
             process = GenericWorker.start_worker(
                 worker_id=0,  # Single worker per model
                 detector=detector,
@@ -205,7 +202,7 @@ class MultiModelRunner:
 
         message_count = 0
         last_report = time.time()
-        
+
         # Track dropped messages per model
         dropped_counts = {model_name: 0 for model_name in self.models.keys()}
         total_dropped = 0
@@ -223,37 +220,38 @@ class MultiModelRunner:
                     else:
                         raise KafkaException(msg.error())
 
-                # Deserialize vector
                 vector = deserialize_vector(msg)
                 if vector:
-                    # Fan out to ALL models (each gets a copy)
                     for model_name, model_info in self.models.items():
                         try:
-                            model_info["queue"].put(vector, block=False)
+                            model_info["queue"].put(vector, block=True, timeout=5.0)
                         except Exception:
-                            # Track dropped messages without spamming logs
                             dropped_counts[model_name] += 1
                             total_dropped += 1
 
                     message_count += 1
 
-                    # Progress report every 10000 messages
                     if message_count % 10000 == 0:
                         elapsed = time.time() - last_report
                         rate = 10000 / elapsed if elapsed > 0 else 0
-                        
-                        # Show aggregate drop stats
-                        drop_summary = " | ".join([
-                            f"{name}: {count:,} dropped" 
-                            for name, count in dropped_counts.items() 
-                            if count > 0
-                        ])
-                        
+
+                        drop_summary = " | ".join(
+                            [
+                                f"{name}: {count:,} dropped"
+                                for name, count in dropped_counts.items()
+                                if count > 0
+                            ]
+                        )
+
                         if drop_summary:
-                            print(f"Processed {message_count:,} messages | Rate: {rate:.0f} msg/s | {drop_summary}")
+                            print(
+                                f"Processed {message_count:,} messages | Rate: {rate:.0f} msg/s | {drop_summary}"
+                            )
                         else:
-                            print(f"Processed {message_count:,} messages | Rate: {rate:.0f} msg/s | No drops")
-                        
+                            print(
+                                f"Processed {message_count:,} messages | Rate: {rate:.0f} msg/s | No drops"
+                            )
+
                         last_report = time.time()
 
         except KeyboardInterrupt:
@@ -267,10 +265,16 @@ class MultiModelRunner:
                 drop_rate = (total_dropped / (message_count * len(self.models))) * 100
                 print(f"Drop rate: {drop_rate:.2f}%")
                 print("\nDrops by model:")
-                for model_name, count in sorted(dropped_counts.items(), key=lambda x: x[1], reverse=True):
+                for model_name, count in sorted(
+                    dropped_counts.items(), key=lambda x: x[1], reverse=True
+                ):
                     if count > 0:
-                        model_drop_rate = (count / message_count) * 100 if message_count > 0 else 0
-                        print(f"  {model_name:15s}: {count:,} ({model_drop_rate:.2f}% of messages)")
+                        model_drop_rate = (
+                            (count / message_count) * 100 if message_count > 0 else 0
+                        )
+                        print(
+                            f"  {model_name:15s}: {count:,} ({model_drop_rate:.2f}% of messages)"
+                        )
             else:
                 print("No messages dropped!")
             print("=" * 60)
@@ -304,7 +308,6 @@ class MultiModelRunner:
             except Exception as e:
                 print(f"  ✗ Failed to signal {model_name}: {e}")
 
-        # Wait for workers to finish
         print("\nWaiting for workers to finish:")
         for model_name, model_info in self.models.items():
             process = model_info["process"]
@@ -324,7 +327,6 @@ class MultiModelRunner:
 
                 print(f"  ✓ {model_name} stopped")
 
-        # Close consumer
         if self.consumer:
             print("\nClosing consumer...")
             self.consumer.close()

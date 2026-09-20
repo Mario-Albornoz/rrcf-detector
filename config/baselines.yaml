@@ -3,11 +3,11 @@
 # Shared settings for all baseline models
 detector:
   # RRCF & HST & Online-iForest: Window-based settings
-  window_size: 1000
-  min_fill_threshold: 50
+  window_size: 256
+  min_fill_threshold: 25
   
   # Z-Score & IsoForest: Training phase settings
-  training_samples: 20000  # ~2 weeks at 3000 msg/sec
+  training_samples: 20000 
   
   # IsoForest specific
   n_estimators: 100
@@ -19,7 +19,7 @@ detector:
   
   # Online-iForest specific (ICML 2024 paper defaults)
   onlineiforest:
-    window_size: 1024        # Sliding window size
+    window_size: 524        # Sliding window size
     num_trees: 32            # Number of trees in forest
     max_leaf_samples: 32     # Max samples per leaf before split
     type: "adaptive"         # "adaptive" or "fixed"
@@ -50,10 +50,10 @@ multiprocessing:
 # To run specific models, modify this list
 models:
   - rrcf
-  - zscore
-  - isoforest
-  - halfspace
-  # - onlineiforest  # Disabled: Too slow, cannot keep up with data rate
+  #- zscore
+  #- isoforest
+  #- halfspace
+  # - onlineiforest  
 
 # Stream Collector Configuration
 stream_collector:
