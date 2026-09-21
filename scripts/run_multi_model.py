@@ -32,7 +32,6 @@ sys.path.insert(0, str(project_root))
 
 import yaml
 from confluent_kafka import Consumer, KafkaError, KafkaException
-
 from src.baselines import (
     HalfSpaceTreesDetector,
     IsolationForestDetector,
