@@ -51,7 +51,7 @@ multiprocessing:
 models:
   #- rrcf
   - zscore
-  - isoforest
+  #- isoforest
   #- halfspace
   # - onlineiforest  
 

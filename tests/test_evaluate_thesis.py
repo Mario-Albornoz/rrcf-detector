@@ -149,7 +149,7 @@ def build_dataset(tmp_path):
 
     episodes_path = tmp_path / "anomaly_log_episodes.csv"
     pd.DataFrame(ep, columns=EPISODE_COLUMNS).to_csv(episodes_path, index=False)
-    scores_path = tmp_path / "scores.parquet"
+    scores_path = tmp_path / "scores_rrcf.parquet"
     pd.DataFrame(scores, columns=["exchange", "instrument", "timestamp_ms", "z_score"]).to_parquet(scores_path)
     silence_path = tmp_path / "silence.csv"
     silence.to_csv(silence_path, index=False)
@@ -376,3 +376,14 @@ def test_without_the_instruments_file_strata_are_simply_absent(tmp_path):
     out = ev.evaluate(args)
     assert out["rrcf"]["phase2"]["point"]["price_spike"]["strict_by_trades_that_day"] is None
     assert out["rrcf"]["phase2"]["point"]["price_spike"]["strict_exact_tick"]["recall_scorable"] == pytest.approx(0.5)
+
+
+def test_method_name_defaults_to_the_scores_file_name_and_keys_the_results(tmp_path):
+    for fname, expected in [("scores_zscore.parquet", "zscore"), ("scores_isoforest.parquet", "isoforest"),
+                            ("other.parquet", "other")]:
+        args = ev.parse_args(["--episodes", "x_episodes.csv", "--scores", str(tmp_path / fname),
+                              "--output", str(tmp_path / "o")])
+        assert args.method_name == expected
+    args = ev.parse_args(["--episodes", "x_episodes.csv", "--scores", str(tmp_path / "scores_zscore.parquet"),
+                          "--output", str(tmp_path / "o"), "--method-name", "mine"])
+    assert args.method_name == "mine"

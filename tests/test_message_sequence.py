@@ -40,7 +40,7 @@ def test_vector_seq_is_decoded_and_defaults_to_zero():
 
 
 def test_scores_parquet_has_a_seq_column(tmp_path):
-    path = tmp_path / "scores.parquet"
+    path = tmp_path / "scores_rrcf.parquet"
     w = ParquetWriter(str(path), buffer_size=1)
     w.write({
         "exchange": "ETR", "instrument": "SAP.ETR", "instrument_class": "E", "timestamp": "t", "timestamp_ms": 1,
@@ -74,7 +74,7 @@ def _dataset(tmp_path, with_seq_in_scores: bool):
     })
     if not with_seq_in_scores:
         scores = scores.drop(columns=["seq"])
-    ep_path, sc_path = tmp_path / "anomaly_log_episodes.csv", tmp_path / "scores.parquet"
+    ep_path, sc_path = tmp_path / "anomaly_log_episodes.csv", tmp_path / "scores_rrcf.parquet"
     episodes.to_csv(ep_path, index=False)
     scores.to_parquet(sc_path)
     return ep_path, sc_path

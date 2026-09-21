@@ -8,6 +8,10 @@ Supports all models implementing BaseDetector interface:
 - Half-Space Trees
 
 Writes scores directly to parquet file for thesis evaluation.
+
+The worker scores every vector it receives. Which vectors it receives (the 1-in-10 stride)
+is decided once, upstream, by the runner (scripts/run_multi_model.py): see
+src/detection/vector_sample.py for why.
 """
 
 import multiprocessing as mp
@@ -131,7 +135,6 @@ class GenericWorker:
         self.running = False
 
         self.messages_received = 0
-        self.messages_processed = 0
         self.scores_written = 0
         self.last_report_time = None
         self.last_report_count = 0
@@ -155,24 +158,15 @@ class GenericWorker:
         self.last_report_time = __import__("time").time()
         print(f"[Worker {self.worker_id}] Started ({model_name})")
 
-        message_count = 0
-        stride = 10
         while self.running:
             try:
                 vector = self.input_queue.get(timeout=1.0)
 
-                # The shutdown sentinel must be checked before the stride: otherwise
-                # it is skipped 9 times out of 10 and the worker never exits.
+                # shutdown sentinel
                 if vector is None:
                     break
 
                 self.messages_received += 1
-                message_count += 1
-
-                if message_count % stride != 0:
-                    continue
-
-                self.messages_processed += 1
                 result = self.detector.ingest_data(vector)
 
                 if result is not None:
@@ -241,25 +235,13 @@ class GenericWorker:
         messages_since_last = self.messages_received - self.last_report_count
         receive_rate = messages_since_last / elapsed if elapsed > 0 else 0
 
-        process_rate = self.messages_processed / (now - self.last_report_time + 0.001)
-
-        stride_ratio = (
-            (self.messages_processed / self.messages_received * 100)
-            if self.messages_received > 0
-            else 0
-        )
-
         if final:
-            print(f"  Total received:  {self.messages_received:,}")
-            print(
-                f"  Total processed: {self.messages_processed:,} ({stride_ratio:.1f}% after stride)"
-            )
+            print(f"  Total received (all scored or used for training): {self.messages_received:,}")
             print(f"  Scores written:  {self.scores_written:,}")
         else:
             print(
                 f"[Worker {self.worker_id}] {model_name}: Received {self.messages_received:,} | "
-                f"Processed {self.messages_processed:,} | Scores {self.scores_written:,} | "
-                f"Rate: {receive_rate:.0f} msg/s in, {process_rate:.0f} scores/s out"
+                f"Scores {self.scores_written:,} | Rate: {receive_rate:.0f} msg/s in"
             )
 
         self.last_report_time = now
