@@ -49,9 +49,9 @@ multiprocessing:
 # Model Selection
 # To run specific models, modify this list
 models:
-  - rrcf
-  #- zscore
-  #- isoforest
+  #- rrcf
+  - zscore
+  - isoforest
   #- halfspace
   # - onlineiforest  
 

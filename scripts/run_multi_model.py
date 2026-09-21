@@ -84,20 +84,24 @@ class MultiModelRunner:
         detector_config = self.config.partitioner_config.detector_config
 
         model_configs = [
+            # (
+            #    "rrcf",
+            #    RRCFDetectorAdapter,
+            #    {
+            #        "window_size": detector_config.window_size,
+            #        "min_fill_threshold": detector_config.min_fill_threshold,
+            #    },
+            # ),
+            ("zscore", ZScoreDetector, {"training_samples": 20000}),
             (
-                "rrcf",
-                RRCFDetectorAdapter,
+                "isoforest",
+                IsolationForestDetector,
                 {
-                    "window_size": detector_config.window_size,
-                    "min_fill_threshold": detector_config.min_fill_threshold,
+                    "training_samples": 20000,
+                    "n_estimators": 100,
+                    "contamination": "auto",
                 },
             ),
-            # ("zscore", ZScoreDetector, {"training_samples": 20000}),
-            # (
-            #    "isoforest",
-            #    IsolationForestDetector,
-            #    {"training_samples": 20000, "n_estimators": 100, "contamination": 0.1},
-            # ),
             # (
             #    "halfspace",
             #    HalfSpaceTreesDetector,

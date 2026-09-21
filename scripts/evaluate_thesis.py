@@ -866,11 +866,11 @@ def evaluate(args) -> Dict:
         "parameters": {k: v for k, v in vars(args).items()
                        if k not in ("episodes", "scores", "silence_log", "validation_log", "output",
                                     "ground_truth_csv", "ground_truth_manifest")},
-        "rrcf": headline,
+        args.method_name: headline,
         "phase3_feed_silence": eval_phase3(episodes[episodes["phase"] == 3], silence, index, scores, args, rng),
         "phase4_validator": eval_validation(episodes[episodes["phase"] == 4], validation, index, args, rng),
         "false_alarms": {
-            "rrcf": far,
+            args.method_name: far,
             "silence": silence_false_alarms(silence, scores, days, args.mult_thresholds),
             "validation_alerts_per_clean_day": validation_false_alarms(validation, days),
         },
@@ -904,7 +904,9 @@ def parse_args(argv=None):
                                           "instrument and day); enables results by activity. Default: the file "
                                           "next to --episodes, if present")
     p.add_argument("--output", required=True, help="output directory")
-    p.add_argument("--method-name", default="rrcf", help="label stored in the results")
+    p.add_argument("--method-name", default=None,
+                   help="label stored in the results and used as the key of the model's block "
+                        "(default: the scores file name without 'scores_' and '.parquet')")
 
     p.add_argument("--alert-threshold", type=float, default=2.0, help="z_score >= threshold is an alert (default 2.0)")
     p.add_argument("--thresholds", type=lambda s: [float(x) for x in s.split(",") if x], default=[],
@@ -936,6 +938,9 @@ def parse_args(argv=None):
         gt = Path(args.ground_truth_csv)
         args.episodes = str(gt.with_name(gt.stem + "_episodes.csv"))
         print(f"NOTE: --ground-truth-csv is deprecated; using {args.episodes}")
+    if args.method_name is None:
+        stem = Path(args.scores).stem
+        args.method_name = stem[len("scores_"):] if stem.startswith("scores_") else stem
     if args.instruments is None:
         sibling = Path(args.episodes).with_name(Path(args.episodes).name.replace("_episodes", "_instruments"))
         if sibling != Path(args.episodes) and sibling.exists():
