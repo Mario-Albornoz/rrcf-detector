@@ -13,9 +13,9 @@ responsible for it:
                                        malformed ISIN / timestamp inversion: validation log
 
 RRCF and the baselines are scored on the same protocol: pass any scores parquet with
-exchange, instrument, timestamp_ms, z_score. The silence and validation logs are rule
-based and produced by the feed-handler; they are not part of the RRCF-vs-baseline
-comparison, so omit them when evaluating a baseline.
+exchange, instrument, timestamp_ms and a score column (raw_score by default). The silence
+and validation logs are rule based and produced by the feed-handler; they are not part of
+the RRCF-vs-baseline comparison, so omit them when evaluating a baseline.
 
 Key points of the protocol (see docs/EVALUATION_METHODOLOGY.md at the repo root):
 
@@ -25,7 +25,17 @@ Key points of the protocol (see docs/EVALUATION_METHODOLOGY.md at the repo root)
     often never scored. Recall is reported over scorable episodes (headline) and over
     all episodes. Scorable depends only on the stride, never on whether the detector
     fired, and is defined on the score records, not on the alerts.
-  * One-sided alerts: an alert is z_score >= threshold (CoDisp is one-sided).
+  * One-sided alerts: an alert is score >= threshold. Every model's raw score is
+    higher-is-more-anomalous (isoforest is negated at the source).
+  * Raw scores, thresholds from a false-alarm budget (--threshold-mode far, the default for
+    raw_score). The detectors' own z_score is normalised by the mean and std of every score
+    since the start of the run: one extreme score inflates that std for good and every
+    later z collapses to about 0 (and halfspace's score, capped at 1, can never reach z = 2).
+    Raw scores are on a different scale per model, so a threshold is expressed as the
+    clean-day false-alarm rate it gives: the score quantile that raises that many alerts per
+    1000 vectors. It is calibrated on the first clean day after the warm-up and the false-alarm
+    rate is reported on the other clean days (held out), so the reported rate is not true by
+    construction. --threshold-mode absolute keeps fixed thresholds (the previous behaviour).
   * Controls instead of a time-shift null: unaffected instruments in the same window
     (phase 1, 3), untouched ticks (phase 2, 4) and clean days give the false-alarm
     rate under identical market conditions.
@@ -87,17 +97,21 @@ def _fingerprint(path: Path) -> Dict:
     return info
 
 
-def load_scores(path: Path) -> pd.DataFrame:
-    wanted = ["exchange", "instrument", "timestamp_ms", "z_score"]
+def load_scores(path: Path, score_column: str = "z_score") -> pd.DataFrame:
+    """Scores with the chosen score column as 'score'."""
     import pyarrow.parquet as pq
 
-    if "seq" in pq.ParquetFile(path).schema_arrow.names:
+    names = pq.ParquetFile(path).schema_arrow.names
+    if score_column not in names:
+        raise SystemExit(f"{path} has no '{score_column}' column (columns: {names}); choose --score-column")
+    wanted = ["exchange", "instrument", "timestamp_ms", score_column]
+    if "seq" in names:
         wanted.append("seq")
-    df = pd.read_parquet(path, columns=wanted)
+    df = pd.read_parquet(path, columns=wanted).rename(columns={score_column: "score"})
     df["key"] = df["exchange"].astype(str) + "|" + df["instrument"].astype(str)
     df["ts"] = df["timestamp_ms"].astype(np.int64)
     df["seq"] = df["seq"].astype(np.int64) if "seq" in df.columns else 0
-    return df[["key", "ts", "z_score", "seq"]]
+    return df[["key", "ts", "score", "seq"]]
 
 
 def _extract_int(detail: pd.Series, name: str) -> pd.Series:
@@ -642,20 +656,52 @@ def _utc_day(ms: np.ndarray) -> np.ndarray:
     return pd.to_datetime(ms, unit="ms", utc=True).strftime("%Y-%m-%d").to_numpy()
 
 
-def clean_days(scores_df, episodes, warmup_days: int, explicit: Optional[List[str]]) -> Dict:
+def clean_days(scores_df, episodes, warmup_days: int, explicit: Optional[List[str]],
+               calibration: Optional[List[str]] = None, held_out: bool = False) -> Dict:
+    """Clean days (no episode starts), minus the warm-up.
+
+    With held_out, the thresholds are calibrated on 'calibration' (default: the first
+    headline day) and the headline false-alarm rate is reported on the remaining days.
+    Without it, or with a single headline day, both are the headline days (in-sample).
+    """
     all_days = sorted(set(_utc_day(scores_df["ts"].to_numpy())))
     injected = set(_utc_day(episodes["start"].to_numpy())) if len(episodes) else set()
     clean = [d for d in all_days if d not in injected]
     warm = set(all_days[:warmup_days])
-    headline = explicit if explicit else [d for d in clean if d not in warm]
+    candidates = explicit if explicit else [d for d in clean if d not in warm]
+    calib, headline = list(candidates), list(candidates)
+    if held_out:
+        calib = list(calibration) if calibration else candidates[:1]
+        headline = [d for d in candidates if d not in calib] or list(calib)
     return {"all": all_days, "injected": sorted(injected), "clean": clean,
-            "warmup_excluded": sorted(warm), "headline": headline}
+            "warmup_excluded": sorted(warm), "calibration": calib, "headline": headline,
+            "held_out": set(calib).isdisjoint(headline)}
+
+
+def thresholds_for_far(scores_df, days: List[str], targets: List[float]) -> Dict[float, float]:
+    """Threshold per false-alarm target (alerts per 1000 vectors) on the given days.
+
+    The threshold is the smallest score value t with at most target/1000 of the vectors
+    scoring >= t. With ties the realised rate can fall below the target; it is reported.
+    """
+    day_of = _utc_day(scores_df["ts"].to_numpy())
+    s = np.sort(scores_df["score"].to_numpy()[np.isin(day_of, days)])
+    if not len(s):
+        raise SystemExit(f"No scores on the calibration days {days}")
+    values = np.unique(s)
+    at_or_above = len(s) - np.searchsorted(s, values, side="left")   # decreasing
+    out = {}
+    for target in targets:
+        allowed = np.floor(target / 1000.0 * len(s))
+        ok = np.nonzero(at_or_above <= allowed)[0]
+        out[target] = float(values[ok[0]]) if len(ok) else float(np.nextafter(s[-1], np.inf))
+    return out
 
 
 def false_alarm_rate(scores_df, days: Dict, thresholds: List[float]) -> Dict:
     """Alerts per 1000 scored vectors on the clean days, per threshold and per day."""
     day_of = _utc_day(scores_df["ts"].to_numpy())
-    z = scores_df["z_score"].to_numpy()
+    z = scores_df["score"].to_numpy()
     codes = scores_df["code"].to_numpy()
     out = {"days": days, "by_threshold": {}}
     for thr in thresholds:
@@ -670,11 +716,14 @@ def false_alarm_rate(scores_df, days: Dict, thresholds: List[float]) -> Dict:
                 "alerts_per_1000_vectors": 1000.0 * alerted.sum() / n if n else None,
                 "instruments_alerting": float(len(np.unique(codes[m][alerted])) / max(len(np.unique(codes[m])), 1)),
             }
-        headline = [per_day[d] for d in days["headline"] if d in per_day]
-        vectors = sum(d["vectors"] for d in headline)
-        alerts = sum(d["alerts"] for d in headline)
+        def rate(which):
+            sel = [per_day[d] for d in days[which] if d in per_day]
+            vectors = sum(d["vectors"] for d in sel)
+            return 1000.0 * sum(d["alerts"] for d in sel) / vectors if vectors else None
+
         out["by_threshold"][str(thr)] = {
-            "headline_alerts_per_1000_vectors": 1000.0 * alerts / vectors if vectors else None,
+            "headline_alerts_per_1000_vectors": rate("headline"),
+            "calibration_alerts_per_1000_vectors": rate("calibration"),
             "per_day": per_day,
         }
     return out
@@ -746,7 +795,7 @@ def evaluate(args) -> Dict:
 
     print("Loading inputs...")
     episodes = load_episodes(Path(args.episodes))
-    scores = load_scores(Path(args.scores))
+    scores = load_scores(Path(args.scores), args.score_column)
     silence = load_silence(Path(args.silence_log), not args.include_flush) if args.silence_log else None
     validation = load_validation(Path(args.validation_log)) if args.validation_log else None
     instruments = load_instruments(Path(args.instruments)) if args.instruments else None
@@ -774,23 +823,38 @@ def evaluate(args) -> Dict:
         raise SystemExit("No episode instrument appears in the scores: check the exchange/instrument "
                          "naming of the inputs (expected 'exchange|instrument' keys to match).")
 
-    scores_tl = Timeline(scores["code"].to_numpy(), scores["ts"].to_numpy(), scores["z_score"].to_numpy(),
+    scores_tl = Timeline(scores["code"].to_numpy(), scores["ts"].to_numpy(), scores["score"].to_numpy(),
                          scores["seq"].to_numpy())
-    days = clean_days(scores, episodes, args.warmup_days, args.clean_days)
+    far_mode = args.threshold_mode == "far"
+    days = clean_days(scores, episodes, args.warmup_days, args.clean_days, args.calibration_days, far_mode)
 
-    thresholds = sorted(set(args.thresholds + [args.alert_threshold]))
+    target_of = {}   # far mode: threshold -> the false-alarm target it was calibrated for
+    operating_target = args.target_far
+    if far_mode:
+        target = args.target_far if args.target_far is not None else 1.0
+        by_target = thresholds_for_far(scores, days["calibration"], sorted(set(args.far_grid + [target])))
+        for t, thr in by_target.items():
+            target_of.setdefault(thr, t)   # ties can map several targets to one threshold
+        thresholds = sorted(target_of)
+        operating, operating_target = by_target[target], target
+        print(f"  thresholds calibrated on {days['calibration']}, false alarms reported on {days['headline']}"
+              f"{'' if days['held_out'] else ' (in-sample: a single clean day)'}")
+        print(f"  operating threshold {operating:g} ({args.score_column}) for {target}/1000 false alarms")
+    else:
+        thresholds = sorted(set(args.thresholds + [args.alert_threshold]))
     far = false_alarm_rate(scores, days, thresholds)
 
-    operating = args.alert_threshold
-    if args.target_far is not None:
-        ok = [t for t in thresholds
-              if far["by_threshold"][str(t)]["headline_alerts_per_1000_vectors"] is not None
-              and far["by_threshold"][str(t)]["headline_alerts_per_1000_vectors"] <= args.target_far]
-        if not ok:
-            raise SystemExit(f"No threshold in {thresholds} reaches {args.target_far} alerts per 1000 "
-                             f"vectors on the clean days; widen --thresholds.")
-        operating = min(ok)
-        print(f"  operating threshold {operating} chosen from clean days (target {args.target_far}/1000)")
+    if not far_mode:
+        operating = args.alert_threshold
+        if args.target_far is not None:
+            ok = [t for t in thresholds
+                  if far["by_threshold"][str(t)]["headline_alerts_per_1000_vectors"] is not None
+                  and far["by_threshold"][str(t)]["headline_alerts_per_1000_vectors"] <= args.target_far]
+            if not ok:
+                raise SystemExit(f"No threshold in {thresholds} reaches {args.target_far} alerts per 1000 "
+                                 f"vectors on the clean days; widen --thresholds.")
+            operating = min(ok)
+            print(f"  operating threshold {operating} chosen from clean days (target {args.target_far}/1000)")
 
     def phase_eval(thr: float, args) -> Dict:
         alerts_tl = scores_tl.where(scores_tl.values >= thr)
@@ -834,17 +898,20 @@ def evaluate(args) -> Dict:
         }
         return result
 
-    print(f"Evaluating at threshold {operating}...")
+    print(f"Evaluating at threshold {operating:g}...")
     headline = phase_eval(operating, args)
 
     sweep_rows = []
-    if args.thresholds:
+    if args.thresholds or far_mode:
         print("Threshold sweep...")
         sweep_args = argparse.Namespace(**{**vars(args), "bootstrap": 0})  # point estimates only
         for thr in thresholds:
             res = headline if thr == operating else phase_eval(thr, sweep_args)
-            row = {"threshold": thr,
-                   "clean_alerts_per_1000_vectors": far["by_threshold"][str(thr)]["headline_alerts_per_1000_vectors"]}
+            row = {"threshold": thr}
+            if far_mode:
+                row["target_far_per_1000"] = target_of[thr]
+                row["calibration_alerts_per_1000_vectors"] = far["by_threshold"][str(thr)]["calibration_alerts_per_1000_vectors"]
+            row["clean_alerts_per_1000_vectors"] = far["by_threshold"][str(thr)]["headline_alerts_per_1000_vectors"]
             row["phase1_affected_detection_rate"] = res["phase1"].get("affected", {}).get("recall_scorable")
             row["phase1_control_detection_rate"] = res["phase1"].get("control_unaffected", {}).get("detection_rate")
             for t, block in res["phase2"]["point"].items():
@@ -856,7 +923,12 @@ def evaluate(args) -> Dict:
     results = {
         "method": args.method_name,
         "operating_threshold": operating,
-        "alert_rule": "z_score >= threshold (one-sided)",
+        "score_column": args.score_column,
+        "threshold_mode": args.threshold_mode,
+        "operating_target_far_per_1000": operating_target,
+        "calibration_days": days["calibration"],
+        "report_days": days["headline"],
+        "alert_rule": f"{args.score_column} >= threshold (one-sided)",
         "inputs": {name: _fingerprint(Path(p)) for name, p in
                    (("episodes", args.episodes), ("scores", args.scores),
                     ("silence_log", args.silence_log), ("validation_log", args.validation_log),
@@ -897,7 +969,19 @@ def parse_args(argv=None):
     # keep working (without the silence/validation logs, phases 3-4 are then skipped).
     p.add_argument("--ground-truth-csv", help=argparse.SUPPRESS)
     p.add_argument("--ground-truth-manifest", help=argparse.SUPPRESS)
-    p.add_argument("--scores", required=True, help="scores parquet (exchange, instrument, timestamp_ms, z_score)")
+    p.add_argument("--scores", required=True, help="scores parquet (exchange, instrument, timestamp_ms, a score column)")
+    p.add_argument("--score-column", default="raw_score",
+                   help="score column alerts are thresholded on (default raw_score; z_score is the detector's "
+                        "own normalisation, which collapses after one extreme score)")
+    p.add_argument("--threshold-mode", choices=["far", "absolute"], default=None,
+                   help="far: thresholds are clean-day score quantiles for --far-grid (default for raw_score); "
+                        "absolute: the fixed --thresholds and --alert-threshold (default for z_score)")
+    p.add_argument("--far-grid", type=lambda s: [float(x) for x in s.split(",") if x],
+                   default=[0.1, 0.2, 0.5, 1, 2, 5, 10],
+                   help="far mode: false-alarm targets (alerts per 1000 clean vectors) swept")
+    p.add_argument("--calibration-days", type=lambda s: [x for x in s.split(",") if x], default=None,
+                   help="far mode: clean days (YYYY-MM-DD) the thresholds are set on; the other clean days "
+                        "report the false-alarm rate (default: the first clean day after the warm-up)")
     p.add_argument("--silence-log", help="silence_alerts.csv from the feed-handler (phase 3)")
     p.add_argument("--validation-log", help="validation_alerts.csv from the feed-handler (phase 4)")
     p.add_argument("--instruments", help="anomaly_log_instruments.csv from the simulator (rows and trades per "
@@ -908,12 +992,14 @@ def parse_args(argv=None):
                    help="label stored in the results and used as the key of the model's block "
                         "(default: the scores file name without 'scores_' and '.parquet')")
 
-    p.add_argument("--alert-threshold", type=float, default=2.0, help="z_score >= threshold is an alert (default 2.0)")
+    p.add_argument("--alert-threshold", type=float, default=2.0,
+                   help="absolute mode: score >= threshold is an alert (default 2.0)")
     p.add_argument("--thresholds", type=lambda s: [float(x) for x in s.split(",") if x], default=[],
-                   help="comma-separated thresholds for the sweep, e.g. 1,2,3,4,5")
+                   help="absolute mode: comma-separated thresholds for the sweep, e.g. 1,2,3,4,5 (ignored in far mode)")
     p.add_argument("--target-far", type=float, default=None,
-                   help="choose the smallest swept threshold whose clean-day false alarms are at most this many "
-                        "alerts per 1000 vectors (fixes the operating point without using injected data)")
+                   help="operating point in alerts per 1000 clean vectors (never set on injected data). far mode: "
+                        "the threshold calibrated for it (default 1.0); absolute mode: the smallest swept "
+                        "threshold within it")
     p.add_argument("--mult-thresholds", type=lambda s: [float(x) for x in s.split(",") if x], default=[1, 2, 3, 5, 10],
                    help="silence alerts are evaluated at these multiples of their own threshold (1 = as logged)")
     p.add_argument("--include-flush", action="store_true", help="keep end-of-stream (flush) silence alerts")
@@ -938,6 +1024,8 @@ def parse_args(argv=None):
         gt = Path(args.ground_truth_csv)
         args.episodes = str(gt.with_name(gt.stem + "_episodes.csv"))
         print(f"NOTE: --ground-truth-csv is deprecated; using {args.episodes}")
+    if args.threshold_mode is None:
+        args.threshold_mode = "far" if args.score_column == "raw_score" else "absolute"
     if args.method_name is None:
         stem = Path(args.scores).stem
         args.method_name = stem[len("scores_"):] if stem.startswith("scores_") else stem

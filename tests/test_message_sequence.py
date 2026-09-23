@@ -81,7 +81,7 @@ def _dataset(tmp_path, with_seq_in_scores: bool):
 
 
 def _run(tmp_path, ep_path, sc_path):
-    args = ev.parse_args(["--episodes", str(ep_path), "--scores", str(sc_path), "--output", str(tmp_path / "o"),
+    args = ev.parse_args(["--episodes", str(ep_path), "--scores", str(sc_path), "--score-column", "z_score", "--output", str(tmp_path / "o"),
                           "--bootstrap", "0"])
     return ev.evaluate(args)["rrcf"]["phase2"]["point"]["price_spike"]
 

@@ -150,7 +150,9 @@ def build_dataset(tmp_path):
     episodes_path = tmp_path / "anomaly_log_episodes.csv"
     pd.DataFrame(ep, columns=EPISODE_COLUMNS).to_csv(episodes_path, index=False)
     scores_path = tmp_path / "scores_rrcf.parquet"
-    pd.DataFrame(scores, columns=["exchange", "instrument", "timestamp_ms", "z_score"]).to_parquet(scores_path)
+    df = pd.DataFrame(scores, columns=["exchange", "instrument", "timestamp_ms", "z_score"])
+    df["raw_score"] = df["z_score"]   # the raw-score tests reuse the same values
+    df.to_parquet(scores_path)
     silence_path = tmp_path / "silence.csv"
     silence.to_csv(silence_path, index=False)
     validation_path = tmp_path / "validation.csv"
@@ -163,7 +165,7 @@ def results(tmp_path_factory):
     tmp = tmp_path_factory.mktemp("eval")
     episodes, scores, silence, validation = build_dataset(tmp)
     args = ev.parse_args([
-        "--episodes", str(episodes), "--scores", str(scores),
+        "--episodes", str(episodes), "--scores", str(scores), "--score-column", "z_score",
         "--silence-log", str(silence), "--validation-log", str(validation),
         "--output", str(tmp / "out"), "--thresholds", "1,2,3,4,10", "--bootstrap", "200",
         "--mult-thresholds", "5,10",
@@ -275,7 +277,7 @@ def test_results_record_input_fingerprints(results):
 def test_target_far_fixes_the_operating_threshold_from_clean_days(tmp_path):
     episodes, scores, silence, validation = build_dataset(tmp_path)
     args = ev.parse_args([
-        "--episodes", str(episodes), "--scores", str(scores), "--output", str(tmp_path / "o"),
+        "--episodes", str(episodes), "--scores", str(scores), "--score-column", "z_score", "--output", str(tmp_path / "o"),
         "--thresholds", "1,2,3,4", "--target-far", "1.0", "--bootstrap", "0",
     ])
     out = ev.evaluate(args)
@@ -288,7 +290,7 @@ def test_instrument_naming_mismatch_is_reported(tmp_path):
     df = pd.read_parquet(scores)
     df["exchange"] = "XETRA"                             # ground truth says ETR
     df.to_parquet(scores)
-    args = ev.parse_args(["--episodes", str(episodes), "--scores", str(scores), "--output", str(tmp_path / "o")])
+    args = ev.parse_args(["--episodes", str(episodes), "--scores", str(scores), "--score-column", "z_score", "--output", str(tmp_path / "o")])
     with pytest.raises(SystemExit, match="naming"):
         ev.evaluate(args)
 
@@ -297,7 +299,7 @@ def test_cli_writes_results_and_sweep(tmp_path):
     episodes, scores, silence, validation = build_dataset(tmp_path)
     out = tmp_path / "out"
     rc = ev.main([
-        "--episodes", str(episodes), "--scores", str(scores), "--silence-log", str(silence),
+        "--episodes", str(episodes), "--scores", str(scores), "--score-column", "z_score", "--silence-log", str(silence),
         "--validation-log", str(validation), "--output", str(out), "--thresholds", "2,3",
         "--bootstrap", "50", "--archive-inputs", "--method-name", "unit-test",
     ])
@@ -311,7 +313,7 @@ def test_cli_writes_results_and_sweep(tmp_path):
 
 def test_baseline_run_without_rule_based_logs(tmp_path):
     episodes, scores, *_ = build_dataset(tmp_path)
-    args = ev.parse_args(["--episodes", str(episodes), "--scores", str(scores), "--output", str(tmp_path / "o"),
+    args = ev.parse_args(["--episodes", str(episodes), "--scores", str(scores), "--score-column", "z_score", "--output", str(tmp_path / "o"),
                           "--bootstrap", "0"])
     out = ev.evaluate(args)
     assert "not evaluated" in out["phase3_feed_silence"]["note"]
@@ -329,12 +331,12 @@ def test_deprecated_ground_truth_flags_resolve_to_the_episode_file(tmp_path):
     args = ev.parse_args([
         "--ground-truth-csv", str(legacy_tick_log),
         "--ground-truth-manifest", str(tmp_path / "injection_manifest.json"),
-        "--scores", str(scores), "--output", str(tmp_path / "o"),
+        "--scores", str(scores), "--score-column", "z_score", "--output", str(tmp_path / "o"),
     ])
     assert args.episodes == str(tmp_path / "anomaly_log_episodes.csv")
 
     with pytest.raises(SystemExit):
-        ev.parse_args(["--scores", str(scores), "--output", str(tmp_path / "o")])
+        ev.parse_args(["--scores", str(scores), "--score-column", "z_score", "--output", str(tmp_path / "o")])
 
 
 def test_results_are_stratified_by_activity(results):
@@ -363,14 +365,14 @@ def test_results_are_stratified_by_activity(results):
 
 def test_instruments_file_is_found_next_to_the_episodes(tmp_path):
     episodes, scores, *_ = build_dataset(tmp_path)
-    args = ev.parse_args(["--episodes", str(episodes), "--scores", str(scores), "--output", str(tmp_path / "o")])
+    args = ev.parse_args(["--episodes", str(episodes), "--scores", str(scores), "--score-column", "z_score", "--output", str(tmp_path / "o")])
     assert args.instruments == str(tmp_path / "anomaly_log_instruments.csv")
 
 
 def test_without_the_instruments_file_strata_are_simply_absent(tmp_path):
     episodes, scores, *_ = build_dataset(tmp_path)
     (tmp_path / "anomaly_log_instruments.csv").unlink()
-    args = ev.parse_args(["--episodes", str(episodes), "--scores", str(scores), "--output", str(tmp_path / "o"),
+    args = ev.parse_args(["--episodes", str(episodes), "--scores", str(scores), "--score-column", "z_score", "--output", str(tmp_path / "o"),
                           "--bootstrap", "0"])
     assert args.instruments is None
     out = ev.evaluate(args)
@@ -381,9 +383,118 @@ def test_without_the_instruments_file_strata_are_simply_absent(tmp_path):
 def test_method_name_defaults_to_the_scores_file_name_and_keys_the_results(tmp_path):
     for fname, expected in [("scores_zscore.parquet", "zscore"), ("scores_isoforest.parquet", "isoforest"),
                             ("other.parquet", "other")]:
-        args = ev.parse_args(["--episodes", "x_episodes.csv", "--scores", str(tmp_path / fname),
+        args = ev.parse_args(["--episodes", "x_episodes.csv", "--scores", str(tmp_path / fname), "--score-column", "z_score",
                               "--output", str(tmp_path / "o")])
         assert args.method_name == expected
-    args = ev.parse_args(["--episodes", "x_episodes.csv", "--scores", str(tmp_path / "scores_zscore.parquet"),
+    args = ev.parse_args(["--episodes", "x_episodes.csv", "--scores", str(tmp_path / "scores_zscore.parquet"), "--score-column", "z_score",
                           "--output", str(tmp_path / "o"), "--method-name", "mine"])
     assert args.method_name == "mine"
+
+
+# --------------------------------------------------------------------------- raw scores, false-alarm thresholds
+
+
+def _far_dataset(tmp_path):
+    """Two clean days after the warm-up: day 2 calibrates, day 5 reports.
+
+    Raw scores on a scale no fixed z threshold fits (0-1000). Day 2 has 1000 vectors with
+    ten distinct high scores; day 5 has 1000 vectors of which 2 are above day 2's top 1%.
+    """
+    rows = []
+    def add(day, n, scores):
+        for i in range(n):
+            rows.append(("ETR", "A.ETR", ms(day, 10, 0, 0, extra_ms=i * 10), float(scores[i])))
+    add(D_WARM, 100, [900.0] * 100)                                       # warm-up: ignored
+    add("2021-11-09", 1000, list(range(990, 1000)) + [1.0] * 990)          # calibration
+    add(D_CLEAN, 1000, [995.0, 999.0] + [1.0] * 998)                      # report
+    add(D_P23, 1000, [1.0] * 999 + [2000.0])                              # injected day
+    ep = [episode(1, 2, "price_spike", "A.ETR", ms(D_P23, 10, 0, 0, extra_ms=999 * 10))]
+    episodes = tmp_path / "anomaly_log_episodes.csv"
+    pd.DataFrame(ep, columns=EPISODE_COLUMNS).to_csv(episodes, index=False)
+    scores = tmp_path / "scores_zscore.parquet"
+    df = pd.DataFrame(rows, columns=["exchange", "instrument", "timestamp_ms", "raw_score"])
+    df["z_score"] = 0.0                                                    # a collapsed normaliser
+    df.to_parquet(scores)
+    return episodes, scores
+
+
+def test_raw_score_is_the_default_and_selects_far_mode(tmp_path):
+    episodes, scores = _far_dataset(tmp_path)
+    args = ev.parse_args(["--episodes", str(episodes), "--scores", str(scores), "--output", str(tmp_path / "o")])
+    assert args.score_column == "raw_score" and args.threshold_mode == "far"
+    args = ev.parse_args(["--episodes", str(episodes), "--scores", str(scores), "--output", str(tmp_path / "o"),
+                          "--score-column", "z_score"])
+    assert args.threshold_mode == "absolute"
+
+
+def test_thresholds_for_far_is_the_clean_day_quantile():
+    day = "2021-11-09"
+    df = pd.DataFrame({"ts": [ms(day, 10, 0, i) for i in range(1000)],
+                       "score": list(range(990, 1000)) + [1.0] * 990})
+    thr = ev.thresholds_for_far(df, [day], [1.0, 5.0, 10.0, 0.5])
+    assert thr[1.0] == 999.0     # 1 of 1000 scores >= 999
+    assert thr[5.0] == 995.0     # 5 of 1000 >= 995
+    assert thr[10.0] == 990.0
+    assert thr[0.5] > 999.0      # no score allowed: above the maximum
+
+
+def test_ties_never_exceed_the_target():
+    day = "2021-11-09"
+    df = pd.DataFrame({"ts": [ms(day, 10, 0, i) for i in range(1000)], "score": [5.0] * 20 + [1.0] * 980})
+    thr = ev.thresholds_for_far(df, [day], [10.0])[10.0]
+    assert (df["score"] >= thr).mean() <= 0.010   # 20 tied scores cannot be split: none alert
+
+
+def test_far_mode_calibrates_on_one_clean_day_and_reports_on_the_other(tmp_path):
+    episodes, scores = _far_dataset(tmp_path)
+    out = ev.evaluate(ev.parse_args([
+        "--episodes", str(episodes), "--scores", str(scores), "--output", str(tmp_path / "o"),
+        "--target-far", "1", "--far-grid", "1,5", "--bootstrap", "0",
+    ]))
+    assert out["score_column"] == "raw_score" and out["threshold_mode"] == "far"
+    assert out["calibration_days"] == ["2021-11-09"] and out["report_days"] == [D_CLEAN]
+    assert out["operating_threshold"] == 999.0 and out["operating_target_far_per_1000"] == 1.0
+    at = out["false_alarms"]["zscore"]["by_threshold"]["999.0"]
+    assert at["calibration_alerts_per_1000_vectors"] == pytest.approx(1.0)
+    assert at["headline_alerts_per_1000_vectors"] == pytest.approx(1.0)    # held out: 999 on day 5
+    # the injected spike (2000) is detected on the raw score although its z_score is 0
+    assert out["zscore"]["phase2"]["point"]["price_spike"]["strict_exact_tick"]["recall_scorable"] == pytest.approx(1.0)
+    sweep = {row["target_far_per_1000"]: row for row in out["sweep"]}
+    assert set(sweep) == {1.0, 5.0}
+    assert sweep[5.0]["threshold"] == 995.0 and sweep[5.0]["clean_alerts_per_1000_vectors"] == pytest.approx(2.0)
+
+
+def test_the_collapsed_z_score_misses_what_the_raw_score_finds(tmp_path):
+    episodes, scores = _far_dataset(tmp_path)
+    out = ev.evaluate(ev.parse_args([
+        "--episodes", str(episodes), "--scores", str(scores), "--output", str(tmp_path / "o"),
+        "--score-column", "z_score", "--bootstrap", "0",
+    ]))
+    assert out["zscore"]["phase2"]["point"]["price_spike"]["strict_exact_tick"]["recall_scorable"] == pytest.approx(0.0)
+
+
+def test_a_single_clean_day_is_used_in_sample_and_says_so(tmp_path):
+    episodes, scores = _far_dataset(tmp_path)
+    days = ev.clean_days(pd.read_parquet(scores).assign(ts=lambda d: d["timestamp_ms"]),
+                         pd.read_csv(episodes).assign(start=lambda d: d["StartMs"]),
+                         warmup_days=1, explicit=[D_CLEAN], held_out=True)
+    assert days["calibration"] == [D_CLEAN] and days["headline"] == [D_CLEAN] and not days["held_out"]
+
+
+def test_missing_score_column_is_reported(tmp_path):
+    episodes, scores = _far_dataset(tmp_path)
+    args = ev.parse_args(["--episodes", str(episodes), "--scores", str(scores), "--output", str(tmp_path / "o"),
+                          "--score-column", "codisp"])
+    with pytest.raises(SystemExit, match="no 'codisp' column"):
+        ev.evaluate(args)
+
+
+def test_operating_target_is_reported_even_when_it_shares_a_threshold(tmp_path):
+    episodes, scores = _far_dataset(tmp_path)
+    out = ev.evaluate(ev.parse_args([
+        "--episodes", str(episodes), "--scores", str(scores), "--output", str(tmp_path / "o"),
+        "--far-grid", "1", "--target-far", "1.5", "--bootstrap", "0",
+    ]))
+    # 1 and 1.5 per 1000 both allow a single alert in 1000 vectors: the same threshold
+    assert out["operating_threshold"] == 999.0
+    assert out["operating_target_far_per_1000"] == 1.5
