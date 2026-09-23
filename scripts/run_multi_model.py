@@ -94,11 +94,14 @@ def model_registry(detector_config) -> dict:
                 "seed": forest.get("seed", 42),
             },
         ),
-        "zscore": (ZScoreDetector, {"training_samples": 20000}),
+        # The frozen models learn from the whole first day of data (the warm-up day, which
+        # the evaluation excludes), not from its first 20,000 vectors (~90 s of trading).
+        "zscore": (ZScoreDetector, {"training_days": 1}),
         "isoforest": (
             IsolationForestDetector,
             {
-                "training_samples": 20000,
+                "training_days": 1,
+                "training_reservoir": 200_000,
                 "n_estimators": 100,
                 "contamination": "auto",
             },

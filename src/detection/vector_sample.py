@@ -47,8 +47,26 @@ SAMPLE_SCHEMA = pa.schema(
         ("warmup_flag", pa.int64()),
         ("session_fallback_flag", pa.int64()),
         ("seq", pa.int64()),
+        # raw measurements behind the z-scores (added later: older recordings lack them)
+        ("has_trade", pa.int64()),
+        ("intertick_ms", pa.float64()),
+        ("has_intertick", pa.int64()),
+        ("price_step", pa.float64()),
+        ("has_price_step", pa.int64()),
+        ("ref_price", pa.float64()),
     ]
 )
+
+# Columns a recording made before the raw measurements were added does not have, with the
+# value a replay of such a file gives them.
+RAW_DEFAULTS = {
+    "has_trade": 0,
+    "intertick_ms": 0.0,
+    "has_intertick": 0,
+    "price_step": 0.0,
+    "has_price_step": 0,
+    "ref_price": 0.0,
+}
 
 _EPOCH = dt.datetime(1970, 1, 1, tzinfo=dt.timezone.utc)
 _ONE_US = dt.timedelta(microseconds=1)
@@ -117,6 +135,8 @@ class VectorSampleWriter:
         c["warmup_flag"].append(v.warmup_flag)
         c["session_fallback_flag"].append(v.session_fallback_flag)
         c["seq"].append(v.seq)
+        for name in RAW_DEFAULTS:
+            c[name].append(getattr(v, name))
         if len(c["seq"]) >= self.buffer_rows:
             self.flush()
 
@@ -153,12 +173,16 @@ def sample_row_count(path: str) -> int:
 
 
 def read_vector_sample(path: str, batch_rows: int = 50_000) -> Iterator[NormalizedVectorDto]:
-    """Yield the recorded vectors in the order they were written."""
+    """Yield the recorded vectors in the order they were written. A recording made before
+    the raw measurements were added replays with their defaults (RAW_DEFAULTS)."""
     pf = pq.ParquetFile(path)
     if pf.metadata.num_row_groups == 0:  # an empty recording; iter_batches raises on it
         return
+    missing = [name for name in RAW_DEFAULTS if name not in pf.schema_arrow.names]
     for batch in pf.iter_batches(batch_size=batch_rows):
         c = batch.to_pydict()
+        for name in missing:
+            c[name] = [RAW_DEFAULTS[name]] * batch.num_rows
         for i in range(batch.num_rows):
             yield NormalizedVectorDto(
                 exchange=c["exchange"][i],
@@ -176,4 +200,5 @@ def read_vector_sample(path: str, batch_rows: int = 50_000) -> Iterator[Normaliz
                 warmup_flag=c["warmup_flag"][i],
                 session_fallback_flag=c["session_fallback_flag"][i],
                 seq=c["seq"][i],
+                **{name: c[name][i] for name in RAW_DEFAULTS},
             )

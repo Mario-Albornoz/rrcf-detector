@@ -3,6 +3,7 @@ vectors are recorded, and a replay of the recording gives every model the same v
 the same order. Includes an end-to-end test through the real run_multi_model.py (no Kafka)
 that runs models in separate replays and checks they score exactly the same rows."""
 
+import dataclasses
 import datetime as dt
 import importlib.util
 import json
@@ -279,9 +280,12 @@ def _keys(path):
 
 
 def test_models_replayed_in_separate_runs_score_exactly_the_same_vectors(tmp_path):
-    # zscore and isoforest train on the first 20,000 vectors and score the rest
+    # zscore and isoforest train on the first day of data and score from the next day on:
+    # 20,000 vectors on day 1, then 2,000 on day 2
     n = 22_000
     vectors = make_vectors(n)
+    vectors = vectors[:20_000] + [dataclasses.replace(v, timestamp=v.timestamp + dt.timedelta(days=1))
+                                  for v in vectors[20_000:]]
     sample = tmp_path / "vectors_sample.parquet"
     record(sample, vectors)
 

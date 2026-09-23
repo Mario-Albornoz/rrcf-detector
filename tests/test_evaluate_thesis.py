@@ -498,3 +498,17 @@ def test_operating_target_is_reported_even_when_it_shares_a_threshold(tmp_path):
     # 1 and 1.5 per 1000 both allow a single alert in 1000 vectors: the same threshold
     assert out["operating_threshold"] == 999.0
     assert out["operating_target_far_per_1000"] == 1.5
+
+
+def test_warmup_day_comes_from_the_run_not_from_the_scores(tmp_path):
+    """A frozen model trains on the whole warm-up day and has no scores on it. The days of
+    its scores alone would then make the calibration day look like the warm-up day."""
+    episodes, scores = _far_dataset(tmp_path)
+    df = pd.read_parquet(scores)
+    df = df[pd.to_datetime(df["timestamp_ms"], unit="ms").dt.strftime("%Y-%m-%d") != D_WARM]
+    df.to_parquet(scores)
+    pd.DataFrame({"Date": [D_WARM, "2021-11-09", D_P23, D_CLEAN], "Exchange": "ETR", "InstrumentID": "A.ETR",
+                  "SecType": "E", "Rows": 1000, "Trades": 100}).to_csv(tmp_path / "anomaly_log_instruments.csv", index=False)
+    out = ev.evaluate(ev.parse_args(["--episodes", str(episodes), "--scores", str(scores),
+                                     "--output", str(tmp_path / "o"), "--bootstrap", "0"]))
+    assert out["calibration_days"] == ["2021-11-09"] and out["report_days"] == [D_CLEAN]

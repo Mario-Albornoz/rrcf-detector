@@ -38,6 +38,13 @@ def deserialize_vector(msg) -> Optional["NormalizedVectorDto"]:
             warmup_flag=data["warmup_flag"],
             session_fallback_flag=data["session_fallback_flag"],
             seq=int(data.get("seq", 0)),
+            # raw measurements; absent from vectors of handlers before they were added
+            has_trade=int(data.get("has_trade", 0)),
+            intertick_ms=float(data.get("intertick_ms", 0.0)),
+            has_intertick=int(data.get("has_intertick", 0)),
+            price_step=float(data.get("price_step", 0.0)),
+            has_price_step=int(data.get("has_price_step", 0)),
+            ref_price=float(data.get("ref_price", 0.0)),
         )
     except (json.JSONDecodeError, KeyError, ValueError) as e:
         print(f"Failed to deserialize message: {e}", file=sys.stderr)
@@ -63,6 +70,16 @@ class NormalizedVectorDto:
     # Identifies the message the vector came from (0 if the producer sends none); it is
     # written to the scores so the evaluation can match a score to an injected message.
     seq: int = 0
+    # The raw measurements behind the z-scores (see the feed handler's NormalizedVector),
+    # recorded so that models can be run on un-normalized features for an ablation.
+    # intertick_ms is only meaningful when has_intertick is 1, price_step when
+    # has_price_step is 1; ref_price is the previous traded price (0 before the first).
+    has_trade: int = 0
+    intertick_ms: float = 0.0
+    has_intertick: int = 0
+    price_step: float = 0.0
+    has_price_step: int = 0
+    ref_price: float = 0.0
 
 
 class NormalizedVectorConsumer:
@@ -134,31 +151,7 @@ class NormalizedVectorConsumer:
             print("Consumer closed")
 
     def _deserialize_message(self, msg) -> Optional[NormalizedVectorDto]:
-        try:
-            data = orjson.loads(msg.value().decode("utf-8"))
-
-            timestamp = ciso8601.parse_datetime(data["timestamp"])
-
-            return NormalizedVectorDto(
-                exchange=data["exchange"],
-                instrument=data["instrument"],
-                instrument_class=data["class"],
-                timestamp=timestamp,
-                model_key=data["model_key"],
-                z_intertick_fast=data["z_intertick_fast"],
-                z_price_step_fast=data["z_price_step_fast"],
-                z_intertick_slow=data["z_intertick_slow"],
-                z_price_step_slow=data["z_price_step_slow"],
-                cusum_intertick=data["cusum_intertick"],
-                cusum_price_step=data["cusum_price_step"],
-                gap_flag=data["gap_flag"],
-                warmup_flag=data["warmup_flag"],
-                session_fallback_flag=data["session_fallback_flag"],
-                seq=int(data.get("seq", 0)),
-            )
-        except (json.JSONDecodeError, KeyError, ValueError) as e:
-            print(f"Failed to deserialize message: {e}", file=sys.stderr)
-            return None
+        return deserialize_vector(msg)
 
     def _maybe_report_metrics(self):
         now = time.time()

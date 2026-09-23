@@ -16,6 +16,7 @@ import numpy as np
 from typing import Dict, Optional
 
 from src.baselines.base_detector import BaseDetector
+from src.baselines.training_window import TrainingWindow
 from src.detection.stats import Stats, update_stats
 from src.kafka.consumer import NormalizedVectorDto
 
@@ -31,13 +32,16 @@ class ZScoreDetector(BaseDetector):
     def __init__(self, config: dict):
         self.config = config
         self.training_samples = config.get("training_samples", 20000)
-        
+        self.window = TrainingWindow(self.training_samples, config.get("training_days"))
+
         self.is_trained = False
         self.sample_count = 0
-        
+
         self.feature_means = None
         self.feature_stds = None
-        self.training_data = []
+        # running (Welford) sums: a whole training day does not have to be kept in memory
+        self._train_mean = np.zeros(6)
+        self._train_m2 = np.zeros(6)
         
         self.score_count = 0
         self.stats = Stats(mean=0.0, std=0.0, m2=0.0)
@@ -53,13 +57,18 @@ class ZScoreDetector(BaseDetector):
             data.cusum_price_step,
         ])
         
+        if not self.is_trained and self.window.ends_before(data.timestamp):
+            self._train()   # the first vector after the training days is scored
+
         if not self.is_trained:
-            self.training_data.append(features)
             self.sample_count += 1
-            
-            if self.sample_count >= self.training_samples:
+            delta = features - self._train_mean
+            self._train_mean += delta / self.sample_count
+            self._train_m2 += delta * (features - self._train_mean)
+
+            if self.window.ends_after(self.sample_count):
                 self._train()
-            
+
             return None
         
         raw_score = self._compute_score(features)
@@ -77,12 +86,10 @@ class ZScoreDetector(BaseDetector):
         }
     
     def _train(self):
-        """Train on collected data and freeze."""
-        training_matrix = np.array(self.training_data)
-        
-        self.feature_means = np.mean(training_matrix, axis=0)
-        self.feature_stds = np.std(training_matrix, axis=0)
-        
+        """Freeze the training statistics (population mean and standard deviation)."""
+        self.feature_means = self._train_mean.copy()
+        self.feature_stds = np.sqrt(self._train_m2 / max(self.sample_count, 1))
+
         self.feature_stds = np.where(
             self.feature_stds < 1e-8,
             1.0,
@@ -90,9 +97,8 @@ class ZScoreDetector(BaseDetector):
         )
         
         self.is_trained = True
-        self.training_data = []
-        
-        print(f"[ZScoreDetector] Trained on {self.sample_count} samples")
+
+        print(f"[ZScoreDetector] Trained on {self.window.describe(self.sample_count)}")
         print(f"[ZScoreDetector] Feature means: {self.feature_means}")
         print(f"[ZScoreDetector] Feature stds: {self.feature_stds}")
     

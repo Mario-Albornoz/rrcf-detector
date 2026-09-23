@@ -657,14 +657,20 @@ def _utc_day(ms: np.ndarray) -> np.ndarray:
 
 
 def clean_days(scores_df, episodes, warmup_days: int, explicit: Optional[List[str]],
-               calibration: Optional[List[str]] = None, held_out: bool = False) -> Dict:
+               calibration: Optional[List[str]] = None, held_out: bool = False,
+               run_days: Optional[List[str]] = None) -> Dict:
     """Clean days (no episode starts), minus the warm-up.
 
     With held_out, the thresholds are calibrated on 'calibration' (default: the first
     headline day) and the headline false-alarm rate is reported on the remaining days.
     Without it, or with a single headline day, both are the headline days (in-sample).
+
+    run_days are the days of the run itself (from the simulator's per-day instrument file).
+    They matter for models without scores on the first day: the frozen baselines train on
+    the whole warm-up day and score from the next one, and the days of their scores alone
+    would make the calibration day look like the warm-up day.
     """
-    all_days = sorted(set(_utc_day(scores_df["ts"].to_numpy())))
+    all_days = sorted(set(_utc_day(scores_df["ts"].to_numpy())) | set(run_days or []))
     injected = set(_utc_day(episodes["start"].to_numpy())) if len(episodes) else set()
     clean = [d for d in all_days if d not in injected]
     warm = set(all_days[:warmup_days])
@@ -826,7 +832,9 @@ def evaluate(args) -> Dict:
     scores_tl = Timeline(scores["code"].to_numpy(), scores["ts"].to_numpy(), scores["score"].to_numpy(),
                          scores["seq"].to_numpy())
     far_mode = args.threshold_mode == "far"
-    days = clean_days(scores, episodes, args.warmup_days, args.clean_days, args.calibration_days, far_mode)
+    run_days = sorted(instruments["day"].unique()) if instruments is not None else None
+    days = clean_days(scores, episodes, args.warmup_days, args.clean_days, args.calibration_days, far_mode,
+                      run_days)
 
     target_of = {}   # far mode: threshold -> the false-alarm target it was calibrated for
     operating_target = args.target_far

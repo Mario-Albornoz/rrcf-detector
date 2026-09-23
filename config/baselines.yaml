@@ -6,7 +6,9 @@ detector:
   window_size: 256
   min_fill_threshold: 25
   
-  # Z-Score & IsoForest: Training phase settings
+  # Z-Score & IsoForest: the frozen models train on the whole first day of data (the warm-up
+  # day). This is set in model_registry() in scripts/run_multi_model.py, which hard-codes the
+  # model settings; the value below is not read.
   training_samples: 20000 
   
   # IsoForest specific

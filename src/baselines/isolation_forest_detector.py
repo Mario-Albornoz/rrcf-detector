@@ -19,6 +19,7 @@ import numpy as np
 from sklearn.ensemble import IsolationForest
 
 from src.baselines.base_detector import BaseDetector
+from src.baselines.training_window import Reservoir, TrainingWindow
 from src.detection.stats import Stats
 from src.kafka.consumer import NormalizedVectorDto
 
@@ -34,12 +35,15 @@ class IsolationForestDetector(BaseDetector):
     def __init__(self, config: dict):
         self.config = config
         self.training_samples = config.get("training_samples", 20000)
+        self.window = TrainingWindow(self.training_samples, config.get("training_days"))
         self.n_estimators = config.get("n_estimators", 100)
         self.contamination = config.get("contamination", 0.1)
 
         self.is_trained = False
         self.sample_count = 0
-        self.training_data = []
+        # A uniform sample of the training period: a whole day is millions of vectors, and
+        # each tree only draws 256 of them anyway (max_samples="auto").
+        self.training_data = Reservoir(config.get("training_reservoir", 200_000), 6)
 
         self.model = None
 
@@ -59,11 +63,14 @@ class IsolationForestDetector(BaseDetector):
             ]
         )
 
+        if not self.is_trained and self.window.ends_before(data.timestamp):
+            self._train()   # the first vector after the training days is scored
+
         if not self.is_trained:
-            self.training_data.append(features)
+            self.training_data.add(features)
             self.sample_count += 1
 
-            if self.sample_count >= self.training_samples:
+            if self.window.ends_after(self.sample_count):
                 self._train()
 
             return None
@@ -84,7 +91,7 @@ class IsolationForestDetector(BaseDetector):
 
     def _train(self):
         """Train Isolation Forest and freeze."""
-        training_matrix = np.array(self.training_data)
+        training_matrix = self.training_data.sample()
 
         self.model = IsolationForest(
             n_estimators=self.n_estimators,
@@ -96,9 +103,10 @@ class IsolationForestDetector(BaseDetector):
         self.model.fit(training_matrix)
 
         self.is_trained = True
-        self.training_data = []
+        self.training_data = None
 
-        print(f"[IsolationForest] Trained on {self.sample_count} samples")
+        print(f"[IsolationForest] Trained on {self.window.describe(self.sample_count)} "
+              f"(a uniform sample of {len(training_matrix):,})")
         print(
             f"[IsolationForest] n_estimators={self.n_estimators}, contamination={self.contamination}"
         )
