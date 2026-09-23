@@ -48,6 +48,7 @@ from src.baselines import (
     IsolationForestDetector,
     OnlineIForestDetector,
     RRCFDetectorAdapter,
+    RRCFForestDetector,
     ZScoreDetector,
 )
 from src.config import ServiceConfig
@@ -73,12 +74,24 @@ DEFAULT_MODELS = ["rrcf", "isoforest"]
 
 def model_registry(detector_config) -> dict:
     """{name: (detector class, its config)} for every model this service can run."""
+    forest = detector_config.rrcf_forest
     return {
         "rrcf": (
             RRCFDetectorAdapter,
             {
                 "window_size": detector_config.window_size,
                 "min_fill_threshold": detector_config.min_fill_threshold,
+            },
+        ),
+        "rrcf_forest": (
+            RRCFForestDetector,
+            {
+                "window_size": forest.get("window_size", detector_config.window_size),
+                "num_trees": forest.get("num_trees", 5),
+                "min_fill_threshold": forest.get(
+                    "min_fill_threshold", detector_config.min_fill_threshold
+                ),
+                "seed": forest.get("seed", 42),
             },
         ),
         "zscore": (ZScoreDetector, {"training_samples": 20000}),
@@ -144,8 +157,6 @@ class MultiModelRunner:
         self.sampled_count = 0
         self.dropped_counts = {}
         self.mode = "live"
-
-    # ------------------------------------------------------------------ start-up
 
     def start(self):
         print("=" * 60)
@@ -553,7 +564,7 @@ Examples:
       --models rrcf --output results/thesis_x/inputs/scores.parquet
 
 Models:
-  rrcf, zscore, isoforest, halfspace, onlineiforest
+  rrcf, rrcf_forest, zscore, isoforest, halfspace, onlineiforest
 
 Output:
   One parquet file per model next to --output: scores_<model>.parquet

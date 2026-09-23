@@ -258,7 +258,7 @@ def test_model_selection_precedence():
 
 def test_registry_knows_every_model():
     reg = rmm.model_registry(ServiceConfig().partitioner_config.detector_config)
-    assert set(reg) == {"rrcf", "zscore", "isoforest", "halfspace", "onlineiforest"}
+    assert set(reg) == {"rrcf", "rrcf_forest", "zscore", "isoforest", "halfspace", "onlineiforest"}
 
 
 # ------------------------------------------------- end to end, real workers, no Kafka

@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 class DetectorConfig:
     window_size: int = 1000
     min_fill_threshold: int = 50
+    rrcf_forest: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -67,6 +68,7 @@ class ServiceConfig:
         detector_config = DetectorConfig(
             window_size=detector_dict.get("window_size", 1000),
             min_fill_threshold=detector_dict.get("min_fill_threshold", 50),
+            rrcf_forest=detector_dict.get("rrcf_forest") or {},
         )
 
         # Build kafka config with ALL properties from YAML

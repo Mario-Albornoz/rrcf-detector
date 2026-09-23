@@ -11,11 +11,12 @@ Plus RRCFDetectorAdapter to make RRCF work with BaseDetector interface.
 """
 
 from .base_detector import BaseDetector
-from .zscore_detector import ZScoreDetector
-from .isolation_forest_detector import IsolationForestDetector
 from .halfspace_trees_detector import HalfSpaceTreesDetector
+from .isolation_forest_detector import IsolationForestDetector
 from .online_iforest_detector import OnlineIForestDetector
 from .rrcf_adapter import RRCFDetectorAdapter
+from .rrcf_forest_detector import RRCFForestDetector
+from .zscore_detector import ZScoreDetector
 
 __all__ = [
     "BaseDetector",
@@ -24,4 +25,5 @@ __all__ = [
     "HalfSpaceTreesDetector",
     "OnlineIForestDetector",
     "RRCFDetectorAdapter",
+    "RRCFForestDetector",
 ]

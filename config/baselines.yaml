@@ -25,6 +25,13 @@ detector:
     type: "adaptive"         # "adaptive" or "fixed"
     min_fill_threshold: 25   # Warmup samples before scoring
 
+  # RRCF forest: several trees per (exchange, class), CoDisp averaged over the trees
+  rrcf_forest:
+    num_trees: 5             # cost grows linearly with this
+    window_size: 256         # same as rrcf, so only the number of trees differs
+    min_fill_threshold: 25
+    seed: 42
+
 # Kafka settings (same as default.yaml)
 kafka:
   bootstrap_servers: "localhost:9092"
@@ -50,6 +57,7 @@ multiprocessing:
 # To run specific models, modify this list
 models:
   #- rrcf
+  #- rrcf_forest
   - zscore
   #- isoforest
   #- halfspace
