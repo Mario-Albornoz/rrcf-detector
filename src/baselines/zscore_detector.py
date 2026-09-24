@@ -16,6 +16,7 @@ import numpy as np
 from typing import Dict, Optional
 
 from src.baselines.base_detector import BaseDetector
+from src.baselines.features import extract, resolve
 from src.baselines.training_window import TrainingWindow
 from src.detection.stats import Stats, update_stats
 from src.kafka.consumer import NormalizedVectorDto
@@ -33,6 +34,9 @@ class ZScoreDetector(BaseDetector):
         self.config = config
         self.training_samples = config.get("training_samples", 20000)
         self.window = TrainingWindow(self.training_samples, config.get("training_days"))
+        # Ablation options (defaults = the evaluated model)
+        self.name = config.get("name", "zscore")
+        self.features = resolve(config.get("features", "all"))
 
         self.is_trained = False
         self.sample_count = 0
@@ -40,23 +44,16 @@ class ZScoreDetector(BaseDetector):
         self.feature_means = None
         self.feature_stds = None
         # running (Welford) sums: a whole training day does not have to be kept in memory
-        self._train_mean = np.zeros(6)
-        self._train_m2 = np.zeros(6)
+        self._train_mean = np.zeros(len(self.features))
+        self._train_m2 = np.zeros(len(self.features))
         
         self.score_count = 0
         self.stats = Stats(mean=0.0, std=0.0, m2=0.0)
         self.z_score = 0.0
         
     def ingest_data(self, data: NormalizedVectorDto) -> Optional[Dict]:
-        features = np.array([
-            data.z_intertick_fast,
-            data.z_price_step_fast,
-            data.z_intertick_slow,
-            data.z_price_step_slow,
-            data.cusum_intertick,
-            data.cusum_price_step,
-        ])
-        
+        features = np.array(extract(data, self.features))
+
         if not self.is_trained and self.window.ends_before(data.timestamp):
             self._train()   # the first vector after the training days is scored
 
@@ -126,4 +123,4 @@ class ZScoreDetector(BaseDetector):
             self.z_score = 0
     
     def get_model_name(self) -> str:
-        return "zscore"
+        return self.name
