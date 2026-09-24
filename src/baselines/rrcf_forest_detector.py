@@ -4,6 +4,7 @@ from typing import Dict, List, Optional
 
 import rrcf
 from src.baselines.base_detector import BaseDetector
+from src.baselines.features import extract, resolve
 from src.detection.stats import Stats, update_stats
 from src.detection.utils import get_instrument_key
 from src.kafka.consumer import NormalizedVectorDto
@@ -27,6 +28,20 @@ class RRCFForestDetector(BaseDetector):
         self.min_fill_threshold = config.get("min_fill_threshold", 25)
         self.seed = config.get("seed", 42)
         self.forests: Dict[str, ForestState] = {}
+        # Ablation options (defaults = the evaluated model).
+        self.name = config.get("name", "rrcf_forest")
+        self.features = resolve(config.get("features", "all"))
+        # "exchange_class": one forest per exchange and class (shared by its instruments);
+        # "instrument": one forest per instrument.
+        self.key_by = config.get("key_by", "exchange_class")
+        if self.key_by not in ("exchange_class", "instrument"):
+            raise ValueError(f"key_by must be exchange_class or instrument, got {self.key_by}")
+        # A cold forest (window below min_fill_threshold) normally emits nothing. Per-
+        # instrument forests stay cold on quiet instruments; if they emitted nothing, those
+        # vectors would drop out of the evaluation's scorable set and recall would be
+        # computed on an easier denominator. With cold_score set, a cold forest emits that
+        # (non-alerting) score instead, so every variant scores the same vectors.
+        self.cold_score = config.get("cold_score")
 
     def _forest(self, key: str) -> ForestState:
         state = self.forests.get(key)
@@ -42,17 +57,15 @@ class RRCFForestDetector(BaseDetector):
 
         return state
 
-    def ingest_data(self, data: NormalizedVectorDto) -> Optional[Dict]:
-        state = self._forest(get_instrument_key(data))
+    def _key(self, data: NormalizedVectorDto) -> str:
+        if self.key_by == "instrument":
+            return f"{data.exchange}:{data.instrument}"
+        return get_instrument_key(data)
 
-        point = [
-            data.z_intertick_fast,
-            data.z_price_step_fast,
-            data.z_intertick_slow,
-            data.z_price_step_slow,
-            data.cusum_intertick,
-            data.cusum_price_step,
-        ]
+    def ingest_data(self, data: NormalizedVectorDto) -> Optional[Dict]:
+        state = self._forest(self._key(data))
+
+        point = extract(data, self.features)
 
         if len(state.indices) >= self.window_size:
             oldest = state.indices.popleft()
@@ -68,7 +81,13 @@ class RRCFForestDetector(BaseDetector):
         if len(state.indices) >= self.min_fill_threshold:
             state.is_warm = True
         if not state.is_warm:
-            return None
+            if self.cold_score is None:
+                return None
+            return {
+                "raw_score": float(self.cold_score),
+                "z_score": 0.0,
+                "stats": {"mean": 0.0, "std": 0.0, "count": 0},
+            }
 
         raw_score = sum(tree.codisp(index) for tree in state.trees) / self.num_trees
         update_stats(state, raw_score)
@@ -84,4 +103,4 @@ class RRCFForestDetector(BaseDetector):
         }
 
     def get_model_name(self) -> str:
-        return "rrcf_forest"
+        return self.name

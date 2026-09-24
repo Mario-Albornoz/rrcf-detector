@@ -75,7 +75,14 @@ DEFAULT_MODELS = ["rrcf", "isoforest"]
 def model_registry(detector_config) -> dict:
     """{name: (detector class, its config)} for every model this service can run."""
     forest = detector_config.rrcf_forest
-    return {
+    forest_config = {
+        "window_size": forest.get("window_size", detector_config.window_size),
+        "num_trees": forest.get("num_trees", 5),
+        "min_fill_threshold": forest.get("min_fill_threshold", detector_config.min_fill_threshold),
+        "seed": forest.get("seed", 42),
+    }
+    zscore_config = {"training_days": 1}
+    registry = {
         "rrcf": (
             RRCFDetectorAdapter,
             {
@@ -83,20 +90,10 @@ def model_registry(detector_config) -> dict:
                 "min_fill_threshold": detector_config.min_fill_threshold,
             },
         ),
-        "rrcf_forest": (
-            RRCFForestDetector,
-            {
-                "window_size": forest.get("window_size", detector_config.window_size),
-                "num_trees": forest.get("num_trees", 5),
-                "min_fill_threshold": forest.get(
-                    "min_fill_threshold", detector_config.min_fill_threshold
-                ),
-                "seed": forest.get("seed", 42),
-            },
-        ),
+        "rrcf_forest": (RRCFForestDetector, forest_config),
         # The frozen models learn from the whole first day of data (the warm-up day, which
         # the evaluation excludes), not from its first 20,000 vectors (~90 s of trading).
-        "zscore": (ZScoreDetector, {"training_days": 1}),
+        "zscore": (ZScoreDetector, zscore_config),
         "isoforest": (
             IsolationForestDetector,
             {
@@ -125,6 +122,46 @@ def model_registry(detector_config) -> dict:
                 "min_fill_threshold": detector_config.min_fill_threshold,
             },
         ),
+    }
+    registry.update(ablation_variants(forest_config, zscore_config))
+    return registry
+
+
+def ablation_variants(forest_config: dict, zscore_config: dict) -> dict:
+    """Variants of rrcf_forest and zscore that differ from them in one property only, for the
+    ablation in docs/Ablation_Plan.md. They are replayed on a recorded vector sample
+    (make replay-models MODELS=<name>), never run live.
+
+      C1 sharing:       *_inst          one forest per instrument instead of per exchange
+      C2 timescales:    *_fast, *_slow  one timescale (plus the CUSUMs)
+      C3 CUSUM:         *_nocusum       the four z-scores only
+      C4 normalization: *_z2 vs *_raw2  the same two measurements, normalized or raw
+
+    The raw variants need a recording with the raw fields (feed-handler df5229b or later).
+    Per-instrument forests emit a score of 0 while cold (see RRCFForestDetector.cold_score);
+    they hold up to one forest per instrument (about 2.8 GB for 5 trees x 2,700 instruments),
+    so replay them alone.
+    """
+    def forest(name, **extra):
+        return (RRCFForestDetector, {**forest_config, "name": name, **extra})
+
+    def zscore(name, **extra):
+        return (ZScoreDetector, {**zscore_config, "name": name, **extra})
+
+    return {
+        "rrcf_forest_inst": forest("rrcf_forest_inst", key_by="instrument", cold_score=0.0),
+        "rrcf_forest_fast": forest("rrcf_forest_fast", features="fast"),
+        "rrcf_forest_slow": forest("rrcf_forest_slow", features="slow"),
+        "rrcf_forest_nocusum": forest("rrcf_forest_nocusum", features="nocusum"),
+        "rrcf_forest_z2": forest("rrcf_forest_z2", features="z2"),
+        "rrcf_forest_raw2": forest("rrcf_forest_raw2", features="raw2"),
+        "rrcf_forest_inst_raw2": forest("rrcf_forest_inst_raw2", features="raw2",
+                                        key_by="instrument", cold_score=0.0),
+        "zscore_fast": zscore("zscore_fast", features="fast"),
+        "zscore_slow": zscore("zscore_slow", features="slow"),
+        "zscore_nocusum": zscore("zscore_nocusum", features="nocusum"),
+        "zscore_z2": zscore("zscore_z2", features="z2"),
+        "zscore_raw2": zscore("zscore_raw2", features="raw2"),
     }
 
 
@@ -567,7 +604,8 @@ Examples:
       --models rrcf --output results/thesis_x/inputs/scores.parquet
 
 Models:
-  rrcf, rrcf_forest, zscore, isoforest, halfspace, onlineiforest
+  rrcf, rrcf_forest, zscore, isoforest, halfspace, onlineiforest, and the ablation
+  variants (rrcf_forest_{inst,fast,slow,nocusum,z2,raw2,inst_raw2}, zscore_{fast,slow,nocusum,z2,raw2})
 
 Output:
   One parquet file per model next to --output: scores_<model>.parquet
