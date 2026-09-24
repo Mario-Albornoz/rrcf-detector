@@ -22,7 +22,7 @@ detector:
   # Online-iForest specific (ICML 2024 paper defaults)
   onlineiforest:
     window_size: 226        # Sliding window size
-    num_trees: 25            # Number of trees in forest
+    num_trees: 15            # Number of trees in forest
     max_leaf_samples: 25     # Max samples per leaf before split
     type: "adaptive"         # "adaptive" or "fixed"
     min_fill_threshold: 25   # Warmup samples before scoring
