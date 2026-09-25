@@ -43,6 +43,7 @@ sys.path.insert(0, str(project_root))
 
 import yaml
 from confluent_kafka import Consumer, KafkaError, KafkaException
+
 from src.baselines import (
     HalfSpaceTreesDetector,
     IsolationForestDetector,
@@ -78,7 +79,9 @@ def model_registry(detector_config) -> dict:
     forest_config = {
         "window_size": forest.get("window_size", detector_config.window_size),
         "num_trees": forest.get("num_trees", 5),
-        "min_fill_threshold": forest.get("min_fill_threshold", detector_config.min_fill_threshold),
+        "min_fill_threshold": forest.get(
+            "min_fill_threshold", detector_config.min_fill_threshold
+        ),
         "seed": forest.get("seed", 42),
     }
     zscore_config = {"training_days": 1}
@@ -115,9 +118,9 @@ def model_registry(detector_config) -> dict:
         "onlineiforest": (
             OnlineIForestDetector,
             {
-                "window_size": 1024,
-                "num_trees": 32,
-                "max_leaf_samples": 32,
+                "window_size": 256,
+                "num_trees": 15,
+                "max_leaf_samples": 25,
                 "type": "adaptive",
                 "min_fill_threshold": detector_config.min_fill_threshold,
             },
@@ -142,6 +145,7 @@ def ablation_variants(forest_config: dict, zscore_config: dict) -> dict:
     they hold up to one forest per instrument (about 2.8 GB for 5 trees x 2,700 instruments),
     so replay them alone.
     """
+
     def forest(name, **extra):
         return (RRCFForestDetector, {**forest_config, "name": name, **extra})
 
@@ -149,14 +153,20 @@ def ablation_variants(forest_config: dict, zscore_config: dict) -> dict:
         return (ZScoreDetector, {**zscore_config, "name": name, **extra})
 
     return {
-        "rrcf_forest_inst": forest("rrcf_forest_inst", key_by="instrument", cold_score=0.0),
+        "rrcf_forest_inst": forest(
+            "rrcf_forest_inst", key_by="instrument", cold_score=0.0
+        ),
         "rrcf_forest_fast": forest("rrcf_forest_fast", features="fast"),
         "rrcf_forest_slow": forest("rrcf_forest_slow", features="slow"),
         "rrcf_forest_nocusum": forest("rrcf_forest_nocusum", features="nocusum"),
         "rrcf_forest_z2": forest("rrcf_forest_z2", features="z2"),
         "rrcf_forest_raw2": forest("rrcf_forest_raw2", features="raw2"),
-        "rrcf_forest_inst_raw2": forest("rrcf_forest_inst_raw2", features="raw2",
-                                        key_by="instrument", cold_score=0.0),
+        "rrcf_forest_inst_raw2": forest(
+            "rrcf_forest_inst_raw2",
+            features="raw2",
+            key_by="instrument",
+            cold_score=0.0,
+        ),
         "zscore_fast": zscore("zscore_fast", features="fast"),
         "zscore_slow": zscore("zscore_slow", features="slow"),
         "zscore_nocusum": zscore("zscore_nocusum", features="nocusum"),
