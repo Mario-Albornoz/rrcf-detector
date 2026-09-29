@@ -1,9 +1,3 @@
-"""
-Adapter to make RRCF AnomalyDetector compatible with BaseDetector interface.
-
-Allows RRCF to be used interchangeably with baseline models.
-"""
-
 from typing import Dict, Optional
 
 from src.baselines.base_detector import BaseDetector
@@ -12,8 +6,6 @@ from src.kafka.consumer import NormalizedVectorDto
 
 
 class RRCFDetectorAdapter(BaseDetector):
-    """Adapter wrapping RRCF to implement BaseDetector interface."""
-    
     def __init__(self, config: dict):
         self.detector = RRCFDetector(config=config)
     

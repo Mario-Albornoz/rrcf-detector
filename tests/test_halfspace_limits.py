@@ -1,5 +1,3 @@
-"""Half-Space Trees must be told the range of our features (River assumes [0, 1])."""
-
 import random
 
 from src.baselines.halfspace_trees_detector import DEFAULT_LIMITS, HalfSpaceTreesDetector
@@ -43,7 +41,6 @@ def test_normal_traffic_is_not_squeezed_against_the_ceiling_and_outliers_stand_o
     det = HalfSpaceTreesDetector({"window_size": 256, "min_fill_threshold": 25})
     normal = sorted(_scores(det, 3000, rng)[1000:])
     median, p99 = normal[len(normal) // 2], normal[int(0.99 * len(normal))]
-    # without limits the median was ~0.98 on z-score-scale inputs
     assert median < 0.6
     outlier = det.ingest_data(_vector([0.0, 8.0, 0.0, 8.0, 0.0, 40.0]))["raw_score"]
     assert outlier > p99

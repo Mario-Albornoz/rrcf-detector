@@ -1,6 +1,3 @@
-"""Tests for scripts/verify_run.py: healthy artifacts pass, and each kind of breakage is
-reported as the failure it is (the checks are only useful if they can fail)."""
-
 import importlib.util
 from pathlib import Path
 
@@ -54,7 +51,7 @@ def test_missing_phase_is_a_failure_that_names_the_cause():
     vr.check_ground_truth(rep, MANIFEST, episodes(phases=(1, 2, 4)), instruments())
     assert status_of(rep, "phase3 episodes") == "FAIL"
     hint = [r for r in rep.rows if "phase3" in r["check"]][0]["hint"]
-    assert "exchange_filter" in hint  # the XETRA-vs-ETR mistake this would have caught
+    assert "exchange_filter" in hint
 
 
 def test_disabled_phase_is_not_expected():
@@ -125,16 +122,16 @@ def test_scores_for_other_instruments_fail_the_overlap_check():
 def test_join_finds_the_injected_ticks_when_timestamps_line_up():
     ep = episodes(phases=(2,))
     sc = pd.DataFrame({"exchange": "ETR", "instrument": ep["InstrumentID"],
-                       "timestamp_ms": ep["ObservedMs"], "z_score": 1.0}).iloc[:2]   # 2 of 20 scored
+                       "timestamp_ms": ep["ObservedMs"], "z_score": 1.0}).iloc[:2]
     rep = vr.Report()
     vr.check_join(rep, sc, ep)
-    assert status_of(rep, "injected trades whose own vector") == "PASS"   # 10%, the stride
+    assert status_of(rep, "injected trades whose own vector") == "PASS"
 
 
 def test_join_fails_when_timestamps_do_not_line_up():
     ep = episodes(phases=(2,))
     sc = pd.DataFrame({"exchange": "ETR", "instrument": ep["InstrumentID"],
-                       "timestamp_ms": ep["ObservedMs"] + 5_000, "z_score": 1.0})   # 5 s off
+                       "timestamp_ms": ep["ObservedMs"] + 5_000, "z_score": 1.0})
     rep = vr.Report()
     vr.check_join(rep, sc, ep)
     assert status_of(rep, "injected trades whose own vector") == "FAIL"
@@ -147,11 +144,11 @@ def silence(n, flush=0):
 
 def test_silence_rate_bands():
     rep = vr.Report()
-    vr.check_handler_logs(rep, silence(10), None, None, vectors=10_000)   # 1 per 1000
+    vr.check_handler_logs(rep, silence(10), None, None, vectors=10_000)
     assert status_of(rep, "silence alerts per 1000") == "PASS"
 
     rep = vr.Report()
-    vr.check_handler_logs(rep, silence(400), None, None, vectors=10_000)  # 40 per 1000: the old mean rule
+    vr.check_handler_logs(rep, silence(400), None, None, vectors=10_000)
     assert status_of(rep, "silence alerts per 1000") == "FAIL"
 
 
@@ -162,7 +159,7 @@ def test_validation_alerts_beyond_the_injected_ones_are_flagged():
     vr.check_handler_logs(rep, None, ok, ep, vectors=100_000)
     assert status_of(rep, "validation alerts beyond") == "PASS"
 
-    reordering = pd.DataFrame({"AlertType": ["TIMESTAMP_INVERSION"] * 500})   # producer reordering
+    reordering = pd.DataFrame({"AlertType": ["TIMESTAMP_INVERSION"] * 500})
     rep = vr.Report()
     vr.check_handler_logs(rep, None, reordering, ep, vectors=100_000)
     assert status_of(rep, "validation alerts beyond") in ("WARN", "FAIL")
@@ -177,7 +174,7 @@ def test_report_exit_status_reflects_failures():
 
 
 def test_cli_runs_on_files_and_returns_nonzero_on_failure(tmp_path, capsys):
-    ep = episodes(phases=(1, 2, 4))  # phase 3 missing
+    ep = episodes(phases=(1, 2, 4))
     ep.to_csv(tmp_path / "ep.csv", index=False)
     instruments().to_csv(tmp_path / "inst.csv", index=False)
     import json

@@ -145,10 +145,6 @@ class AnomalyDetector:
         return len(self.forest)
 
     def determine_alert_level(self, z_score: float) -> str:
-        """
-        Adaptive alert level based on z-score (standard deviations from mean).
-        Uses 3-sigma rule: z > 3 means 99.7% outlier.
-        """
         abs_z = abs(z_score)
 
         if abs_z < 2.0:

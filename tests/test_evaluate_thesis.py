@@ -1,5 +1,3 @@
-"""Tests for scripts/evaluate_thesis.py on synthetic data with known outcomes."""
-
 import importlib.util
 import json
 from pathlib import Path
@@ -45,12 +43,10 @@ def build_dataset(tmp_path):
         for t, zz in zip(times, z):
             scores.append(("ETR", inst, int(t), float(zz)))
 
-    # --- clean days: day 1 is the warm-up (excluded), day 5 is the headline.
     add_scores("W1.ETR", [ms(D_WARM, 10, 0, i) for i in range(100)], [3.0] * 5 + [0.1] * 95)
     add_scores("W1.ETR", [ms(D_CLEAN, 10, 0, 0, extra_ms=i * 100) for i in range(1000)],
                [3.0] * 4 + [0.1] * 996)
 
-    # --- phase 1 (day 2): one affected instrument and three controls in the same window
     start, end = ms(D_P1, 9, 30), ms(D_P1, 14, 0)
     ep.append(episode(1, 1, "tick_rate_decline", "P.ETR", start, end,
                       detail="ticks_seen=20;ticks_dropped=8"))
@@ -60,14 +56,12 @@ def build_dataset(tmp_path):
     add_scores("C2.ETR", times, 0.1)
     add_scores("C3.ETR", times, 0.1)
 
-    # --- phase 2 (day 3): point anomalies on X.ETR
     t1, t2, t3, t4 = (ms(D_P23, 10, 0, s) for s in (0, 10, 20, 30))
     for i, t in enumerate((t1, t2, t3, t4), start=10):
         ep.append(episode(i, 2, "price_spike", "X.ETR", t, detail="multiplier=3"))
-    add_scores("X.ETR", [t1, t2], [5.0, 0.5])         # t3 never scored
-    add_scores("X.ETR", [t4 + 1000], [6.0])           # t4 unscored, alert one second later
+    add_scores("X.ETR", [t1, t2], [5.0, 0.5])
+    add_scores("X.ETR", [t4 + 1000], [6.0])
 
-    # stale runs on S.ETR: one detected, one with no visible effect, one never scored
     s1 = ms(D_P23, 11, 0, 0)
     ep.append(episode(20, 2, "stale_price", "S.ETR", s1, s1 + 3000, detail="changed_ticks=3"))
     add_scores("S.ETR", [s1 + 1000], [4.0])
@@ -76,11 +70,8 @@ def build_dataset(tmp_path):
     s3 = ms(D_P23, 11, 10, 0)
     ep.append(episode(22, 2, "stale_price", "S2.ETR", s3, s3 + 3000, detail="changed_ticks=2"))
 
-    # --- phase 3 (day 3, afternoon): blackouts and silence alerts
     l1 = ms(D_P23, 15, 29, 59)
     b_start = ms(D_P23, 15, 30, 1)
-    # the last delivered message on the update clock is l1 (what the silence alert reports as
-    # LastSeen); its millisecond TradingTime is 300 ms later
     ep.append(episode(30, 3, "feed_silence", "Q1.ETR", b_start, b_start + 120_000,
                       resume=b_start + 123_000, last_delivered=l1 + 300,
                       detail=f"blackout_s=120;delivered_before=100;last_delivered_time_ms={l1}"))
@@ -94,50 +85,44 @@ def build_dataset(tmp_path):
         add_scores(inst, [b_start + 30_000], 0.1)
 
     silence = pd.DataFrame([
-        # answers Q1: about the silence that began at its last delivered tick
         dict(Exchange="ETR", Instrument="Q1.ETR", AlertType="SILENCE", LastSeenMs=l1, DetectedAtMs=l1 + 500,
              ObservedAtMs=b_start + 123_000, ElapsedMs=125_000, ThresholdMs=500, ExpectedIntervalMs=100,
              Level="SEVERE", Trigger="resume", WallTimeMs=0),
-        # answers Q3 (no LastDelivered): detected inside the blackout
         dict(Exchange="ETR", Instrument="Q3.ETR", AlertType="SILENCE", LastSeenMs=l1 - 5000,
              DetectedAtMs=b_start + 4000, ObservedAtMs=b_start + 123_000, ElapsedMs=130_000, ThresholdMs=500,
              ExpectedIntervalMs=100, Level="SEVERE", Trigger="resume", WallTimeMs=0),
-        # a natural silence on an unaffected instrument: a false alert
         dict(Exchange="ETR", Instrument="R.ETR", AlertType="SILENCE", LastSeenMs=b_start,
              DetectedAtMs=b_start + 1000, ObservedAtMs=b_start + 9000, ElapsedMs=9000, ThresholdMs=500,
              ExpectedIntervalMs=100, Level="SEVERE", Trigger="resume", WallTimeMs=0),
-        # end-of-stream artefact, excluded by default
         dict(Exchange="ETR", Instrument="K1.ETR", AlertType="SILENCE", LastSeenMs=b_start,
              DetectedAtMs=b_start + 1000, ObservedAtMs=b_start + 9000, ElapsedMs=9000, ThresholdMs=500,
              ExpectedIntervalMs=100, Level="SEVERE", Trigger="flush", WallTimeMs=0),
     ])
 
-    # --- phase 4 (day 4): validator episodes
     o1, o2 = ms(D_P4, 10, 0, 0), ms(D_P4, 10, 1, 0)
     ep.append(episode(40, 4, "malformed_isin", "M.ETR", o1, detail="corruption=random_chars"))
     ep.append(episode(41, 4, "malformed_isin", "M.ETR", o2, detail="corruption=random_chars"))
     i1, i2, i3 = (ms(D_P4, 11, 0, s) for s in (0, 10, 20))
     ep.append(episode(42, 4, "timestamp_inversion", "T.ETR", i1 - 60_000, observed=i1 - 60_000,
-                      detail=f"rewind_s=60;prev_ms={i1}"))            # detectable, detected
+                      detail=f"rewind_s=60;prev_ms={i1}"))
     ep.append(episode(43, 4, "timestamp_inversion", "T.ETR", i2, observed=i2 - 60_000,
-                      detail=f"rewind_s=60;prev_ms={i2 - 60_100}"))   # rewound to before prev? no: undetectable
+                      detail=f"rewind_s=60;prev_ms={i2 - 60_100}"))
     ep.append(episode(44, 4, "timestamp_inversion", "T.ETR", i3, observed=i3 - 60_000,
-                      detail=f"rewind_s=60;prev_ms={i3}"))            # detectable, missed
+                      detail=f"rewind_s=60;prev_ms={i3}"))
     n1 = ms(D_P4, 12, 0, 0)
     ep.append(episode(45, 4, "implausible_price", "N.ETR", n1, detail="factor=50.00;direction=up"))
-    ep.append(episode(46, 4, "null_price", "N.ETR", n1 + 5000, detail="field=Last"))  # legacy, undetectable
+    ep.append(episode(46, 4, "null_price", "N.ETR", n1 + 5000, detail="field=Last"))
     add_scores("N.ETR", [n1], [9.0])
 
     validation = pd.DataFrame([
         dict(Exchange="ETR", Instrument="M.ETR", AlertType="MALFORMED_ISIN", TickTimeMs=o1, ReferenceTimeMs=None,
              Detail="isin=XXX", WallTimeMs=0),
         dict(Exchange="ETR", Instrument="M.ETR", AlertType="MALFORMED_ISIN", TickTimeMs=o2 + 500_000,
-             ReferenceTimeMs=None, Detail="isin=XXX", WallTimeMs=0),   # stray: no such episode
+             ReferenceTimeMs=None, Detail="isin=XXX", WallTimeMs=0),
         dict(Exchange="ETR", Instrument="T.ETR", AlertType="TIMESTAMP_INVERSION", TickTimeMs=i1 - 60_000,
              ReferenceTimeMs=i1, Detail="backward_ms=60000", WallTimeMs=0),
     ])
 
-    # rows and trades per instrument and day, as the simulator writes them (before injection)
     instruments = [
         (D_P1, "P.ETR", 20000, 900), (D_P1, "C1.ETR", 50, 2), (D_P1, "C2.ETR", 500, 30), (D_P1, "C3.ETR", 5000, 300),
         (D_P23, "X.ETR", 30000, 300), (D_P23, "S.ETR", 800, 5), (D_P23, "S2.ETR", 300, 0),
@@ -151,7 +136,7 @@ def build_dataset(tmp_path):
     pd.DataFrame(ep, columns=EPISODE_COLUMNS).to_csv(episodes_path, index=False)
     scores_path = tmp_path / "scores_rrcf.parquet"
     df = pd.DataFrame(scores, columns=["exchange", "instrument", "timestamp_ms", "z_score"])
-    df["raw_score"] = df["z_score"]   # the raw-score tests reuse the same values
+    df["raw_score"] = df["z_score"]
     df.to_parquet(scores_path)
     silence_path = tmp_path / "silence.csv"
     silence.to_csv(silence_path, index=False)
@@ -178,12 +163,10 @@ def test_point_anomalies_strict_and_lenient(results):
     strict, lenient = block["strict_exact_tick"], block["lenient_within_window"]
 
     assert strict["episodes"] == 4
-    assert strict["scorable"] == 2                      # t3 and t4 have no score on the tick itself
-    assert strict["recall_scorable"] == pytest.approx(0.5)   # t1 alerts, t2 does not
+    assert strict["scorable"] == 2
+    assert strict["recall_scorable"] == pytest.approx(0.5)
     assert strict["recall_all"] == pytest.approx(0.25)
 
-    # t4's vector was skipped by the stride, but the next vector alerts: lenient sees it
-    # as an alert, yet t4 is not scorable so it does not count towards scorable recall
     assert lenient["scorable"] == 2
     assert lenient["recall_scorable"] == pytest.approx(0.5)
 
@@ -191,8 +174,8 @@ def test_point_anomalies_strict_and_lenient(results):
 def test_stale_runs_only_count_effective_ones(results):
     stale = results["rrcf"]["phase2"]["stale_price"]
     assert stale["episodes_total"] == 3
-    assert stale["episodes_effective"] == 2             # the changed_ticks=0 run is invisible by design
-    assert stale["scorable"] == 1                       # S2.ETR never scored
+    assert stale["episodes_effective"] == 2
+    assert stale["scorable"] == 1
     assert stale["recall_scorable"] == pytest.approx(1.0)
 
 
@@ -206,18 +189,18 @@ def test_phase1_compares_affected_with_control(results):
 
 def test_phase3_matches_by_last_seen_and_ignores_cold_and_index(results):
     p3 = results["phase3_feed_silence"]
-    assert p3["episodes"] == 3                          # the index (SecType I) episode is dropped
-    assert p3["warm_episodes"] == 2                     # Q2 has only 10 delivered ticks
+    assert p3["episodes"] == 3
+    assert p3["warm_episodes"] == 2
 
     block = p3["by_multiplier"]["5.0"]
     assert block["episodes"] == 2 and block["recall_scorable"] == pytest.approx(1.0)
     assert block["latency_from_last_tick_ms"]["median"] == pytest.approx(500)
 
     prec = block["alert_precision_in_scope"]
-    assert prec["alerts"] == 3                          # Q1, Q3 and the stray R alert; flush excluded
+    assert prec["alerts"] == 3
     assert prec["matched_to_blackouts"] == 2
     assert prec["precision"] == pytest.approx(2 / 3)
-    assert block["control_unaffected"]["alert_rate"] == pytest.approx(1 / 3)   # R alerted, K1/K2 did not
+    assert block["control_unaffected"]["alert_rate"] == pytest.approx(1 / 3)
 
 
 def test_higher_multiplier_can_only_lose_alerts(results):
@@ -235,7 +218,7 @@ def test_validator_recall_and_false_alerts(results):
     ts = v["timestamp_inversion"]
     assert ts["episodes"] == 3
     assert ts["recall_all"] == pytest.approx(1 / 3)
-    assert ts["detectable_episodes"] == 2               # one rewind stays after the previous tick
+    assert ts["detectable_episodes"] == 2
     assert ts["recall_detectable"] == pytest.approx(0.5)
     assert ts["false_alerts"] == 0
 
@@ -255,9 +238,8 @@ def test_false_alarm_rate_uses_clean_days_without_warmup(results):
     assert set(days["injected"]) == {D_P1, D_P23, D_P4}
 
     at2 = far["by_threshold"]["2.0"]
-    assert at2["headline_alerts_per_1000_vectors"] == pytest.approx(4.0)   # 4 alerts in 1000 vectors
+    assert at2["headline_alerts_per_1000_vectors"] == pytest.approx(4.0)
     assert far["by_threshold"]["4.0"]["headline_alerts_per_1000_vectors"] == pytest.approx(0.0)
-    # the warm-up day is still reported, just not in the headline
     assert at2["per_day"][D_WARM]["alerts"] == 5
 
 
@@ -281,14 +263,13 @@ def test_target_far_fixes_the_operating_threshold_from_clean_days(tmp_path):
         "--thresholds", "1,2,3,4", "--target-far", "1.0", "--bootstrap", "0",
     ])
     out = ev.evaluate(args)
-    # thresholds 1-3 give 4/1000 on the clean day; 4 gives 0, the first within target
     assert out["operating_threshold"] == 4.0
 
 
 def test_instrument_naming_mismatch_is_reported(tmp_path):
     episodes, scores, *_ = build_dataset(tmp_path)
     df = pd.read_parquet(scores)
-    df["exchange"] = "XETRA"                             # ground truth says ETR
+    df["exchange"] = "XETRA"
     df.to_parquet(scores)
     args = ev.parse_args(["--episodes", str(episodes), "--scores", str(scores), "--score-column", "z_score", "--output", str(tmp_path / "o")])
     with pytest.raises(SystemExit, match="naming"):
@@ -322,7 +303,6 @@ def test_baseline_run_without_rule_based_logs(tmp_path):
 
 
 def test_deprecated_ground_truth_flags_resolve_to_the_episode_file(tmp_path):
-    """The old make target passes --ground-truth-csv; it must keep working."""
     episodes, scores, *_ = build_dataset(tmp_path)
     legacy_tick_log = tmp_path / "anomaly_log.csv"
     legacy_tick_log.write_text("Timestamp,InstrumentID\n")
@@ -340,22 +320,18 @@ def test_deprecated_ground_truth_flags_resolve_to_the_episode_file(tmp_path):
 
 
 def test_results_are_stratified_by_activity(results):
-    # phase 2 spikes: all four on X.ETR, which traded 300 times that day
     spike = results["rrcf"]["phase2"]["point"]["price_spike"]["strict_by_trades_that_day"]
     assert spike["200+"]["episodes"] == 4
     assert "1-19" not in spike
 
-    # stale runs: the effective one on S.ETR (5 trades) and the never-scored one on S2.ETR (0 trades)
     stale = results["rrcf"]["phase2"]["stale_price"]["by_trades_that_day"]
     assert stale["1-19"]["episodes"] == 1 and stale["1-19"]["recall_scorable"] == pytest.approx(1.0)
     assert stale["0"]["episodes"] == 1 and stale["0"]["scorable"] == 0
 
-    # phase 3: warm blackouts Q1 (5000 messages) and Q3 (50 messages)
     tiers = results["phase3_feed_silence"]["by_multiplier"]["5.0"]["by_messages_that_day"]
     assert tiers["1k-9,999"]["episodes"] == 1 and tiers["<100"]["episodes"] == 1
     assert tiers["1k-9,999"]["recall_scorable"] == pytest.approx(1.0)
 
-    # phase 1: one busy affected instrument, three controls of different activity
     p1 = results["rrcf"]["phase1"]["by_messages_that_day"]
     assert p1["10k+"]["affected_instruments"] == 1
     assert p1["<100"]["control_instruments"] == 1 and p1["100-999"]["control_instruments"] == 1
@@ -391,29 +367,21 @@ def test_method_name_defaults_to_the_scores_file_name_and_keys_the_results(tmp_p
     assert args.method_name == "mine"
 
 
-# --------------------------------------------------------------------------- raw scores, false-alarm thresholds
-
-
 def _far_dataset(tmp_path):
-    """Two clean days after the warm-up: day 2 calibrates, day 5 reports.
-
-    Raw scores on a scale no fixed z threshold fits (0-1000). Day 2 has 1000 vectors with
-    ten distinct high scores; day 5 has 1000 vectors of which 2 are above day 2's top 1%.
-    """
     rows = []
     def add(day, n, scores):
         for i in range(n):
             rows.append(("ETR", "A.ETR", ms(day, 10, 0, 0, extra_ms=i * 10), float(scores[i])))
-    add(D_WARM, 100, [900.0] * 100)                                       # warm-up: ignored
-    add("2021-11-09", 1000, list(range(990, 1000)) + [1.0] * 990)          # calibration
-    add(D_CLEAN, 1000, [995.0, 999.0] + [1.0] * 998)                      # report
-    add(D_P23, 1000, [1.0] * 999 + [2000.0])                              # injected day
+    add(D_WARM, 100, [900.0] * 100)
+    add("2021-11-09", 1000, list(range(990, 1000)) + [1.0] * 990)
+    add(D_CLEAN, 1000, [995.0, 999.0] + [1.0] * 998)
+    add(D_P23, 1000, [1.0] * 999 + [2000.0])
     ep = [episode(1, 2, "price_spike", "A.ETR", ms(D_P23, 10, 0, 0, extra_ms=999 * 10))]
     episodes = tmp_path / "anomaly_log_episodes.csv"
     pd.DataFrame(ep, columns=EPISODE_COLUMNS).to_csv(episodes, index=False)
     scores = tmp_path / "scores_zscore.parquet"
     df = pd.DataFrame(rows, columns=["exchange", "instrument", "timestamp_ms", "raw_score"])
-    df["z_score"] = 0.0                                                    # a collapsed normaliser
+    df["z_score"] = 0.0
     df.to_parquet(scores)
     return episodes, scores
 
@@ -432,17 +400,17 @@ def test_thresholds_for_far_is_the_clean_day_quantile():
     df = pd.DataFrame({"ts": [ms(day, 10, 0, i) for i in range(1000)],
                        "score": list(range(990, 1000)) + [1.0] * 990})
     thr = ev.thresholds_for_far(df, [day], [1.0, 5.0, 10.0, 0.5])
-    assert thr[1.0] == 999.0     # 1 of 1000 scores >= 999
-    assert thr[5.0] == 995.0     # 5 of 1000 >= 995
+    assert thr[1.0] == 999.0
+    assert thr[5.0] == 995.0
     assert thr[10.0] == 990.0
-    assert thr[0.5] > 999.0      # no score allowed: above the maximum
+    assert thr[0.5] > 999.0
 
 
 def test_ties_never_exceed_the_target():
     day = "2021-11-09"
     df = pd.DataFrame({"ts": [ms(day, 10, 0, i) for i in range(1000)], "score": [5.0] * 20 + [1.0] * 980})
     thr = ev.thresholds_for_far(df, [day], [10.0])[10.0]
-    assert (df["score"] >= thr).mean() <= 0.010   # 20 tied scores cannot be split: none alert
+    assert (df["score"] >= thr).mean() <= 0.010
 
 
 def test_far_mode_calibrates_on_one_clean_day_and_reports_on_the_other(tmp_path):
@@ -456,8 +424,7 @@ def test_far_mode_calibrates_on_one_clean_day_and_reports_on_the_other(tmp_path)
     assert out["operating_threshold"] == 999.0 and out["operating_target_far_per_1000"] == 1.0
     at = out["false_alarms"]["zscore"]["by_threshold"]["999.0"]
     assert at["calibration_alerts_per_1000_vectors"] == pytest.approx(1.0)
-    assert at["headline_alerts_per_1000_vectors"] == pytest.approx(1.0)    # held out: 999 on day 5
-    # the injected spike (2000) is detected on the raw score although its z_score is 0
+    assert at["headline_alerts_per_1000_vectors"] == pytest.approx(1.0)
     assert out["zscore"]["phase2"]["point"]["price_spike"]["strict_exact_tick"]["recall_scorable"] == pytest.approx(1.0)
     sweep = {row["target_far_per_1000"]: row for row in out["sweep"]}
     assert set(sweep) == {1.0, 5.0}
@@ -495,14 +462,11 @@ def test_operating_target_is_reported_even_when_it_shares_a_threshold(tmp_path):
         "--episodes", str(episodes), "--scores", str(scores), "--output", str(tmp_path / "o"),
         "--far-grid", "1", "--target-far", "1.5", "--bootstrap", "0",
     ]))
-    # 1 and 1.5 per 1000 both allow a single alert in 1000 vectors: the same threshold
     assert out["operating_threshold"] == 999.0
     assert out["operating_target_far_per_1000"] == 1.5
 
 
 def test_warmup_day_comes_from_the_run_not_from_the_scores(tmp_path):
-    """A frozen model trains on the whole warm-up day and has no scores on it. The days of
-    its scores alone would then make the calibration day look like the warm-up day."""
     episodes, scores = _far_dataset(tmp_path)
     df = pd.read_parquet(scores)
     df = df[pd.to_datetime(df["timestamp_ms"], unit="ms").dt.strftime("%Y-%m-%d") != D_WARM]

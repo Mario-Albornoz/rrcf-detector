@@ -1,15 +1,3 @@
-"""
-Tests for DETECT-5 baseline models.
-
-Acceptance Criteria:
-1. All three baselines implement BaseDetector interface
-2. All produce same output format as RRCF
-3. Basic sanity check: 200 normal vectors, then 10 anomalous vectors
-   - All baselines should score anomalous vectors higher
-4. Isolation Forest score negated correctly (higher = more anomalous)
-5. River dict conversion for HST handled correctly
-"""
-
 from datetime import datetime
 
 import numpy as np
@@ -26,7 +14,6 @@ from src.kafka.consumer import NormalizedVectorDto
 
 @pytest.fixture
 def normal_vector():
-    """Create a normal feature vector."""
     return NormalizedVectorDto(
         exchange="binance",
         instrument="BTC-USDT",
@@ -47,7 +34,6 @@ def normal_vector():
 
 @pytest.fixture
 def anomalous_vector():
-    """Create an anomalous feature vector."""
     return NormalizedVectorDto(
         exchange="binance",
         instrument="BTC-USDT",
@@ -67,10 +53,7 @@ def anomalous_vector():
 
 
 class TestZScoreDetector:
-    """Test Z-Score Threshold baseline."""
-    
     def test_implements_base_detector(self):
-        """ZScoreDetector implements BaseDetector interface."""
         detector = ZScoreDetector(config={"training_samples": 100})
         assert isinstance(detector, BaseDetector)
         assert hasattr(detector, "ingest_data")
@@ -78,12 +61,10 @@ class TestZScoreDetector:
         assert hasattr(detector, "determine_alert_level")
     
     def test_model_name(self):
-        """Model name is 'zscore'."""
         detector = ZScoreDetector(config={"training_samples": 100})
         assert detector.get_model_name() == "zscore"
     
     def test_training_phase(self, normal_vector):
-        """Returns None during training phase."""
         detector = ZScoreDetector(config={"training_samples": 10})
         
         for _ in range(9):
@@ -92,7 +73,6 @@ class TestZScoreDetector:
             assert not detector.is_trained
     
     def test_becomes_trained(self, normal_vector):
-        """Becomes trained after sufficient samples."""
         detector = ZScoreDetector(config={"training_samples": 10})
         
         for _ in range(10):
@@ -103,7 +83,6 @@ class TestZScoreDetector:
         assert detector.feature_stds is not None
     
     def test_output_format(self, normal_vector):
-        """Returns correct output format after training."""
         detector = ZScoreDetector(config={"training_samples": 10})
         
         for _ in range(10):
@@ -120,7 +99,6 @@ class TestZScoreDetector:
         assert "count" in result["stats"]
     
     def test_sanity_check(self, normal_vector, anomalous_vector):
-        """Anomalous vectors score higher than normal."""
         detector = ZScoreDetector(config={"training_samples": 200})
         
         normal_scores = []
@@ -145,20 +123,15 @@ class TestZScoreDetector:
 
 
 class TestIsolationForestDetector:
-    """Test Isolation Forest baseline."""
-    
     def test_implements_base_detector(self):
-        """IsolationForestDetector implements BaseDetector interface."""
         detector = IsolationForestDetector(config={"training_samples": 100})
         assert isinstance(detector, BaseDetector)
     
     def test_model_name(self):
-        """Model name is 'isoforest'."""
         detector = IsolationForestDetector(config={"training_samples": 100})
         assert detector.get_model_name() == "isoforest"
     
     def test_training_phase(self, normal_vector):
-        """Returns None during training phase."""
         detector = IsolationForestDetector(config={"training_samples": 10})
         
         for _ in range(9):
@@ -166,7 +139,6 @@ class TestIsolationForestDetector:
             assert result is None
     
     def test_becomes_trained(self, normal_vector):
-        """Becomes trained after sufficient samples."""
         detector = IsolationForestDetector(config={"training_samples": 10})
         
         for _ in range(10):
@@ -176,7 +148,6 @@ class TestIsolationForestDetector:
         assert detector.model is not None
     
     def test_output_format(self, normal_vector):
-        """Returns correct output format after training."""
         detector = IsolationForestDetector(config={"training_samples": 10})
         
         for _ in range(10):
@@ -190,7 +161,6 @@ class TestIsolationForestDetector:
         assert "stats" in result
     
     def test_score_is_positive(self, normal_vector):
-        """Scores are positive (negated correctly)."""
         detector = IsolationForestDetector(config={"training_samples": 10})
         
         for _ in range(10):
@@ -201,10 +171,8 @@ class TestIsolationForestDetector:
         assert result["raw_score"] >= 0, "Score should be positive (negated)"
     
     def test_sanity_check(self, normal_vector, anomalous_vector):
-        """Anomalous vectors score higher than normal."""
         detector = IsolationForestDetector(config={"training_samples": 200})
-        
-        # Train with varied normal data
+
         for i in range(200):
             varied_vector = NormalizedVectorDto(
                 exchange="binance",
@@ -259,20 +227,15 @@ class TestIsolationForestDetector:
 
 
 class TestHalfSpaceTreesDetector:
-    """Test Half-Space Trees baseline."""
-    
     def test_implements_base_detector(self):
-        """HalfSpaceTreesDetector implements BaseDetector interface."""
         detector = HalfSpaceTreesDetector(config={"min_fill_threshold": 10})
         assert isinstance(detector, BaseDetector)
     
     def test_model_name(self):
-        """Model name is 'halfspace'."""
         detector = HalfSpaceTreesDetector(config={"min_fill_threshold": 10})
         assert detector.get_model_name() == "halfspace"
     
     def test_cold_start(self, normal_vector):
-        """Returns None during cold start."""
         detector = HalfSpaceTreesDetector(config={"min_fill_threshold": 10})
         
         for _ in range(9):
@@ -280,7 +243,6 @@ class TestHalfSpaceTreesDetector:
             assert result is None
     
     def test_becomes_warm(self, normal_vector):
-        """Becomes warm after min_fill_threshold."""
         detector = HalfSpaceTreesDetector(config={"min_fill_threshold": 10})
         
         for _ in range(10):
@@ -290,7 +252,6 @@ class TestHalfSpaceTreesDetector:
         assert result is not None
     
     def test_output_format(self, normal_vector):
-        """Returns correct output format."""
         detector = HalfSpaceTreesDetector(config={"min_fill_threshold": 10})
         
         for _ in range(10):
@@ -304,10 +265,8 @@ class TestHalfSpaceTreesDetector:
         assert "stats" in result
     
     def test_sanity_check(self, normal_vector, anomalous_vector):
-        """HST computes scores (may return 0 for simple patterns)."""
         detector = HalfSpaceTreesDetector(config={"min_fill_threshold": 50})
-        
-        # Train with varied normal data
+
         for i in range(200):
             varied_vector = NormalizedVectorDto(
                 exchange="binance",
@@ -326,8 +285,7 @@ class TestHalfSpaceTreesDetector:
                 session_fallback_flag=0,
             )
             detector.ingest_data(varied_vector)
-        
-        # Verify model produces scores (even if 0)
+
         normal_scores = []
         for i in range(20):
             varied_vector = NormalizedVectorDto(
@@ -355,9 +313,7 @@ class TestHalfSpaceTreesDetector:
             result = detector.ingest_data(anomalous_vector)
             if result:
                 anomalous_scores.append(result["raw_score"])
-        
-        # HST can return 0 for all scores with simple patterns
-        # Just verify scores are computed and model works
+
         assert len(normal_scores) > 0, "Should produce scores for normal data"
         assert len(anomalous_scores) > 0, "Should produce scores for anomalous data"
         assert all(isinstance(s, (int, float)) for s in normal_scores)
@@ -365,10 +321,7 @@ class TestHalfSpaceTreesDetector:
 
 
 class TestAlertLevels:
-    """Test alert level classification (shared across all models)."""
-    
     def test_alert_levels(self):
-        """Alert level thresholds work correctly."""
         detector = ZScoreDetector(config={"training_samples": 10})
         
         assert detector.determine_alert_level(0.5) == "normal"
@@ -379,7 +332,6 @@ class TestAlertLevels:
         assert detector.determine_alert_level(5.0) == "high"
     
     def test_negative_z_scores(self):
-        """Negative z-scores handled correctly (absolute value)."""
         detector = ZScoreDetector(config={"training_samples": 10})
         
         assert detector.determine_alert_level(-0.5) == "normal"

@@ -1,21 +1,4 @@
 #!/usr/bin/env python3
-"""
-Check a recorded vector sample against the runner's own account of the run.
-
-At shutdown, scripts/run_multi_model.py writes vectors_sample.summary.json next to
-vectors_sample.parquet: how many vectors it consumed from Kafka, kept after the stride, and
-recorded. This script re-reads the parquet file and checks that what is on disk is exactly
-that (so an archived sample is known to be complete and to be the sample the models scored):
-
-    rows in the file == recorded_rows == kept == consumed // stride
-    stream_index runs stride, 2*stride, ..., kept*stride with no gap
-    consumed lies in [kept*stride, kept*stride + stride)
-
-    python scripts/check_vector_sample.py results/latest/inputs/vectors/vectors_sample.parquet
-
-Exit status 0 if every check passes, 1 otherwise (also when the summary file is missing).
-Used by `make archive-run`.
-"""
 
 import argparse
 import json
@@ -27,7 +10,6 @@ import pyarrow.parquet as pq
 
 
 def check(sample: str, summary_file: str = None) -> list:
-    """Return [(description, passed, detail), ...]."""
     results = []
 
     def add(desc, ok, detail=""):
@@ -63,7 +45,7 @@ def check(sample: str, summary_file: str = None) -> list:
             f"last {int(idx[-1]):,}, consumed {consumed:,}")
 
     dropped = {m: n for m, n in (summary.get("dropped") or {}).items() if n}
-    if dropped:  # not a failure: the sample is complete, but those models' live scores are not
+    if dropped:
         add("no model dropped vectors live", True,
             "NOTE " + ", ".join(f"{m} dropped {n:,}" for m, n in dropped.items())
             + ": their live scores miss those rows; replay them from the sample")

@@ -1,20 +1,3 @@
-"""
-Half-Space Trees Baseline Detector
-
-River HalfSpaceTrees - genuinely online streaming anomaly detection.
-Introduced by Tan, Ting & Liu (2011) at IJCAI.
-
-Unlike frozen baselines, HST updates incrementally with each vector.
-Tree structure is fixed; only mass counts update. Constant time and memory.
-
-No Training Assumption:
-    HST learns from the stream from tick one. No batch training phase.
-    This makes it a direct streaming competitor to RRCF.
-
-The most interesting baseline - both are online learners, question becomes
-which is better suited to financial feed health domain.
-"""
-
 from typing import Dict, Optional
 
 import numpy as np
@@ -34,13 +17,6 @@ DEFAULT_LIMITS = {
 
 
 class HalfSpaceTreesDetector(BaseDetector):
-    """
-    Online streaming baseline using River Half-Space Trees.
-
-    No training phase - learns from stream immediately.
-    Direct competitor to RRCF.
-    """
-
     def __init__(self, config: dict):
         self.config = config
         self.window_size = config.get("window_size", 1000)
@@ -99,7 +75,6 @@ class HalfSpaceTreesDetector(BaseDetector):
         }
 
     def _update_stats(self, raw_score: float):
-        """Update rolling statistics using Welford's algorithm."""
         self.score_count += 1
         delta = raw_score - self.stats.mean
         self.stats.mean += delta / self.score_count

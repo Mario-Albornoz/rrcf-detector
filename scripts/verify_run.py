@@ -1,27 +1,4 @@
 #!/usr/bin/env python3
-"""
-Verify a pipeline run: what went right, what went wrong, and where.
-
-Reads whatever a run produced (the simulator's ground truth and manifest, the two Kafka
-topics, the feed-handler's evaluation logs, the detector's scores) and checks each stage
-against what the design says should have happened. Each check prints PASS, WARN or FAIL
-with what was observed, what was expected, and a hint about the usual cause. Exit status
-is 1 if anything failed, so it can gate a long evaluation.
-
-It is meant to be run right after a run and before the evaluation: a broken input makes
-every later number meaningless, and this says so in a minute rather than after days.
-
-    venv/bin/python scripts/verify_run.py  # from rrcf-detector/ \\
-        --manifest price-feed-simulator/data/injection_manifest.json \\
-        --episodes price-feed-simulator/anomaly_log_episodes.csv \\
-        --instruments price-feed-simulator/anomaly_log_instruments.csv \\
-        --silence-log feed-handler/data/eval/silence_alerts.csv \\
-        --validation-log feed-handler/data/eval/validation_alerts.csv \\
-        --scores rrcf-detector/data/scores_rrcf.parquet \\
-        --kafka localhost:9092 --raw-topic raw-ticks --vector-topic normalized-vectors
-
-Every input is optional; checks whose input is missing are reported as SKIP.
-"""
 
 import argparse
 import json
@@ -47,7 +24,6 @@ class Report:
                           "observed": observed, "expected": expected, "hint": hint})
 
     def within(self, stage, name, value, ok, warn, expected, hint, fmt="{:.4g}", value_text=None):
-        """PASS if ok(value), WARN if warn(value), else FAIL."""
         text = value_text if value_text is not None else fmt.format(value)
         status = PASS if ok(value) else (WARN if warn(value) else FAIL)
         self.add(stage, name, status, text, expected, "" if status == PASS else hint)
@@ -70,9 +46,6 @@ class Report:
                     print(f"         hint:     {r['hint']}")
         counts = {s: sum(1 for r in self.rows if r["status"] == s) for s in (PASS, WARN, FAIL, SKIP)}
         print(f"\n{counts[PASS]} passed, {counts[WARN]} warnings, {counts[FAIL]} FAILED, {counts[SKIP]} skipped")
-
-
-# ------------------------------------------------------------------------ ground truth
 
 
 def check_ground_truth(rep: Report, manifest: Optional[dict], episodes: Optional[pd.DataFrame],
@@ -140,9 +113,6 @@ def check_ground_truth(rep: Report, manifest: Optional[dict], episodes: Optional
         rep.add(stage, "days in the run", PASS, f"{sorted(eq['Date'].unique())}")
 
 
-# ------------------------------------------------------------------------------ Kafka
-
-
 def _consumer(brokers: str):
     from confluent_kafka import Consumer
 
@@ -151,7 +121,6 @@ def _consumer(brokers: str):
 
 
 def topic_offsets(brokers: str, topic: str) -> Dict[int, tuple]:
-    """partition -> (low, high) offsets."""
     c = _consumer(brokers)
     try:
         md = c.list_topics(topic, timeout=10)
@@ -169,7 +138,6 @@ def topic_offsets(brokers: str, topic: str) -> Dict[int, tuple]:
 
 
 def sample_topic(brokers: str, topic: str, per_partition: int = 4000) -> List[dict]:
-    """The last `per_partition` messages of each partition, decoded as JSON, in offset order."""
     from confluent_kafka import TopicPartition
 
     offsets = topic_offsets(brokers, topic)
@@ -253,7 +221,7 @@ def check_kafka(rep: Report, brokers: str, raw_topic: Optional[str], vector_topi
                 else:
                     rep.add(stage, f"vectors on {vector_topic}", PASS, f"{totals['vectors']:,}")
                 _check_vector_sample(rep, brokers, vector_topic)
-    except Exception as e:  # noqa: BLE001 - a broker problem is itself the finding
+    except Exception as e:  # noqa: BLE001
         rep.add(stage, "Kafka reachable", FAIL, f"{type(e).__name__}: {e}", "a broker at --kafka",
                 "is docker compose up?")
     return totals
@@ -277,7 +245,6 @@ def _check_raw_sample(rep: Report, brokers: str, topic: str) -> None:
                "0% means the price is lost in the simulator; the parser may be reading the wrong column",
                fmt="{:.2%}", value_text=f"{share:.2%} of {len(eq):,} sampled")
 
-    # per-instrument order inside a partition: a producer that reorders breaks the validator
     if {"ID", "Time", "_partition", "_offset"} <= set(df.columns):
         d = df.sort_values(["_partition", "_offset"]).copy()
         d["t"] = pd.to_datetime(d["Time"], utc=True, errors="coerce")
@@ -334,9 +301,6 @@ def _check_vector_sample(rep: Report, brokers: str, topic: str) -> None:
                "far more: the statistics are mis-calibrated (warm-up, overnight gaps, clock)", fmt="{:.1%}")
 
 
-# ------------------------------------------------------------------ feed-handler logs
-
-
 def check_handler_logs(rep: Report, silence: Optional[pd.DataFrame], validation: Optional[pd.DataFrame],
                        episodes: Optional[pd.DataFrame], vectors: Optional[int]) -> None:
     stage = "Feed-handler evaluation logs"
@@ -376,9 +340,6 @@ def check_handler_logs(rep: Report, silence: Optional[pd.DataFrame], validation:
                        "about 0 on real data (natural backward steps are under 1 s)",
                        "valid messages are being rejected: producer reordering, or a clock/tolerance problem",
                        fmt="{:.4%}", value_text=f"{unexplained:,} of {len(validation):,} alerts ({rate:.4%} of vectors)")
-
-
-# -------------------------------------------------------------------------- detector
 
 
 def check_scores(rep: Report, scores: Optional[pd.DataFrame], vectors: Optional[int],
@@ -430,8 +391,6 @@ def check_scores(rep: Report, scores: Optional[pd.DataFrame], vectors: Optional[
 
 
 def check_join(rep: Report, scores: Optional[pd.DataFrame], episodes: Optional[pd.DataFrame]) -> None:
-    """Do the scores line up with the ground truth in time? The exact-tick match is the most
-    fragile join in the evaluation."""
     stage = "Scores meet ground truth"
     if scores is None or episodes is None or not len(scores) or not len(episodes):
         rep.add(stage, "exact-tick scorable share", SKIP, "needs scores and episodes")
@@ -446,7 +405,6 @@ def check_join(rep: Report, scores: Optional[pd.DataFrame], episodes: Optional[p
     if len(point) > 200_000:
         point = point.sample(200_000, random_state=0)
 
-    # exact join on the message sequence number when both sides carry it
     if "seq" in scores.columns and scores["seq"].gt(0).any() and "Seq" in point.columns and point["Seq"].notna().all():
         share = float(point["Seq"].astype("int64").isin(set(scores["seq"].astype("int64"))).mean())
         rep.within(stage, "injected messages whose own vector was scored (by sequence number)", share,
@@ -469,9 +427,6 @@ def check_join(rep: Report, scores: Optional[pd.DataFrame], episodes: Optional[p
                "0% means the timestamps do not line up (score timestamp_ms vs the episode's ObservedMs): "
                "the evaluation's exact-tick matching would find nothing",
                fmt="{:.1%}", value_text=f"{share:.1%} of {len(point):,} episodes")
-
-
-# ---------------------------------------------------------------------------- driver
 
 
 def _read_csv(path: Optional[str]) -> Optional[pd.DataFrame]:

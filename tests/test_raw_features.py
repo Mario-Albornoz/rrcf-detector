@@ -1,7 +1,3 @@
-"""The raw measurements behind the z-scores travel from the feed handler's JSON through the
-recorded vector sample, so an ablation can run models on un-normalized features. Recordings
-and messages from before they were added still work, with the raw fields at their defaults."""
-
 import dataclasses
 import datetime as dt
 
@@ -70,7 +66,6 @@ def test_raw_fields_are_recorded_and_replayed_exactly(tmp_path):
 
 
 def test_a_recording_without_raw_columns_still_replays(tmp_path):
-    """Recordings of earlier runs have no raw columns; replaying them must keep working."""
     vectors = [_dto(k) for k in range(10)]
     old_schema = pa.schema([f for f in SAMPLE_SCHEMA if f.name not in RAW_DEFAULTS])
     rows = {name: [] for name in old_schema.names}
@@ -84,4 +79,4 @@ def test_a_recording_without_raw_columns_still_replays(tmp_path):
     pq.write_table(pa.Table.from_pydict(rows, schema=old_schema), path)
 
     replayed = list(read_vector_sample(str(path)))
-    assert replayed == vectors   # the raw fields come back at their defaults
+    assert replayed == vectors

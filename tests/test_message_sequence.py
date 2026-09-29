@@ -1,5 +1,3 @@
-"""The message sequence number: from the wire to the scores to the evaluation."""
-
 import importlib.util
 import json
 from pathlib import Path
@@ -36,7 +34,7 @@ VECTOR = {
 
 def test_vector_seq_is_decoded_and_defaults_to_zero():
     assert deserialize_vector(_Msg({**VECTOR, "seq": 987654})).seq == 987654
-    assert deserialize_vector(_Msg(VECTOR)).seq == 0   # an older producer sends none
+    assert deserialize_vector(_Msg(VECTOR)).seq == 0
 
 
 def test_scores_parquet_has_a_seq_column(tmp_path):
@@ -58,9 +56,6 @@ T = 1_636_538_400_412
 
 
 def _dataset(tmp_path, with_seq_in_scores: bool):
-    """One injected spike (message 100). Its neighbour, message 99, shares its millisecond;
-    only the neighbour has a scored vector, and that vector is an alert (e.g. the price
-    snapping back). Matching on (instrument, time) wrongly credits the injected message."""
     episodes = pd.DataFrame([{
         "EpisodeID": 1, "Phase": "phase2", "AnomalyType": "price_spike", "Exchange": "ETR", "InstrumentID": "X.ETR",
         "StartMs": T, "EndMs": T, "ObservedMs": T, "ResumeMs": None, "LastDeliveredMs": None,
@@ -89,12 +84,11 @@ def _run(tmp_path, ep_path, sc_path):
 def test_exact_matching_does_not_credit_a_neighbouring_message(tmp_path):
     block = _run(tmp_path, *_dataset(tmp_path, with_seq_in_scores=True))
     assert block["strict_matching"] == "message sequence number"
-    assert block["strict_exact_tick"]["scorable"] == 0   # message 100 was never scored
+    assert block["strict_exact_tick"]["scorable"] == 0
     assert block["strict_exact_tick"]["detected"] == 0
 
 
 def test_time_matching_is_ambiguous_and_says_so(tmp_path):
     block = _run(tmp_path, *_dataset(tmp_path, with_seq_in_scores=False))
     assert "ambiguous" in block["strict_matching"]
-    # the documented weakness: the neighbour at the same millisecond is taken for the injected message
     assert block["strict_exact_tick"]["scorable"] == 1 and block["strict_exact_tick"]["detected"] == 1

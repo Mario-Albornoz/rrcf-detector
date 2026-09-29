@@ -1,29 +1,4 @@
 #!/usr/bin/env python3
-"""
-Run multi-model comparison service.
-
-Runs the selected models in parallel, each with a dedicated worker process. Each model
-writes its scores to its own parquet file (scores_<model>.parquet).
-
-Usage:
-    python scripts/run_multi_model.py --config config/baselines.yaml
-    python scripts/run_multi_model.py --record data/vectors/vectors_sample.parquet
-    python scripts/run_multi_model.py --from-file <vectors_sample.parquet> --models rrcf \\
-        --output <dir>/scores.parquet
-
-Architecture:
-    One Kafka consumer (this process, the "runner") feeds all models:
-    - The runner applies the stride: only every STRIDE-th vector (10 by default) goes on;
-      it is chosen here, once, so every model gets the same vectors in the same order
-    - With --record the runner writes those vectors to a parquet file
-    - Each model has its own worker process and its own input queue
-    - The workers score everything they receive (they have no stride of their own)
-
-Replay (--from-file):
-    Instead of Kafka the runner reads a recorded vectors_sample.parquet, in order, and feeds
-    it to the selected models without dropping anything. Models can then be run one after
-    the other, in separate runs, and still score exactly the same vectors.
-"""
 
 import argparse
 import json
@@ -35,7 +10,6 @@ import sys
 import time
 from pathlib import Path
 
-# Ignore SIGHUP to prevent termination when parent process exits
 signal.signal(signal.SIGHUP, signal.SIG_IGN)
 
 project_root = Path(__file__).parent.parent
@@ -69,12 +43,10 @@ SAMPLE_STRIDE = 10
 # Longest a live shutdown waits for a worker to score its backlog (make stop-all allows 120 s).
 LIVE_STOP_WAIT_SEC = 90.0
 
-# Models used when neither --models nor the `models:` list of the config selects any.
 DEFAULT_MODELS = ["rrcf", "isoforest"]
 
 
 def model_registry(detector_config) -> dict:
-    """{name: (detector class, its config)} for every model this service can run."""
     forest = detector_config.rrcf_forest
     forest_config = {
         "window_size": forest.get("window_size", detector_config.window_size),
@@ -94,8 +66,6 @@ def model_registry(detector_config) -> dict:
             },
         ),
         "rrcf_forest": (RRCFForestDetector, forest_config),
-        # The frozen models learn from the whole first day of data (the warm-up day, which
-        # the evaluation excludes), not from its first 20,000 vectors (~90 s of trading).
         "zscore": (ZScoreDetector, zscore_config),
         "isoforest": (
             IsolationForestDetector,
@@ -131,21 +101,6 @@ def model_registry(detector_config) -> dict:
 
 
 def ablation_variants(forest_config: dict, zscore_config: dict) -> dict:
-    """Variants of rrcf_forest and zscore that differ from them in one property only, for the
-    ablation in docs/Ablation_Plan.md. They are replayed on a recorded vector sample
-    (make replay-models MODELS=<name>), never run live.
-
-      C1 sharing:       *_inst          one forest per instrument instead of per exchange
-      C2 timescales:    *_fast, *_slow  one timescale (plus the CUSUMs)
-      C3 CUSUM:         *_nocusum       the four z-scores only
-      C4 normalization: *_z2 vs *_raw2  the same two measurements, normalized or raw
-
-    The raw variants need a recording with the raw fields (feed-handler df5229b or later).
-    Per-instrument forests emit a score of 0 while cold (see RRCFForestDetector.cold_score);
-    they hold up to one forest per instrument (about 2.8 GB for 5 trees x 2,700 instruments),
-    so replay them alone.
-    """
-
     def forest(name, **extra):
         return (RRCFForestDetector, {**forest_config, "name": name, **extra})
 
@@ -176,14 +131,6 @@ def ablation_variants(forest_config: dict, zscore_config: dict) -> dict:
 
 
 class MultiModelRunner:
-    """
-    Run the selected models in parallel.
-
-    Each model gets:
-    - One dedicated worker process
-    - One input queue for message routing
-    """
-
     def __init__(
         self,
         config: ServiceConfig,
@@ -201,7 +148,7 @@ class MultiModelRunner:
         self.overwrite = overwrite
         self.models = (
             {}
-        )  # {model_name: {"detector": class, "queue": Queue, "process": Process}}
+        )
         self.consumer = None
         self.running = False
         self.sampled_count = 0
@@ -225,7 +172,6 @@ class MultiModelRunner:
         self._run_loop()
 
     def start_replay(self, sample_file: str):
-        """Feed a recorded vectors_sample.parquet to the models instead of reading Kafka."""
         print("=" * 60)
         print("Multi-Model Anomaly Detection Service (replay)")
         print("=" * 60)
@@ -247,7 +193,6 @@ class MultiModelRunner:
         self._run_replay(sample_file, total)
 
     def _init_models(self):
-        """Initialize model configurations."""
         registry = model_registry(self.config.partitioner_config.detector_config)
 
         print("Initializing models:")
@@ -267,7 +212,6 @@ class MultiModelRunner:
         return str(Path(self.parquet_file).parent / f"scores_{model_name}.parquet")
 
     def _check_outputs_free(self):
-        """A replay writes scores into an archive: never silently overwrite one."""
         existing = [
             self._score_file(m)
             for m in self.models
@@ -280,7 +224,6 @@ class MultiModelRunner:
             sys.exit(1)
 
     def _start_workers(self):
-        """Start one worker process per model."""
         kafka_config = self.config.partitioner_config.kafka_config
 
         print("Starting workers:")
@@ -290,10 +233,9 @@ class MultiModelRunner:
 
             detector = model_info["detector_class"](model_info["config"])
 
-            # Disable Kafka publishing - only write to Parquet for thesis
             worker_kafka_config = {
                 "bootstrap.servers": kafka_config.bootstrap_servers,
-                "output_topic": None,  # DISABLED - only write to Parquet
+                "output_topic": None,
                 "client.id": f"multi-model-{model_name}",
                 "linger.ms": kafka_config.linger_ms,
                 "batch.size": kafka_config.batch_size,
@@ -303,7 +245,7 @@ class MultiModelRunner:
             }
 
             process = GenericWorker.start_worker(
-                worker_id=0,  # Single worker per model
+                worker_id=0,
                 detector=detector,
                 input_queue=queue_,
                 kafka_config=worker_kafka_config,
@@ -317,7 +259,6 @@ class MultiModelRunner:
         print()
 
     def _start_consumer(self):
-        """Start Kafka consumer for input vectors."""
         kafka_config = self.config.partitioner_config.kafka_config
 
         consumer_config = {
@@ -336,11 +277,7 @@ class MultiModelRunner:
         print(f"✓ Stride: every {self.sampler.stride}th vector is scored")
         print()
 
-    # ------------------------------------------------------------- vector routing
-
     def _put(self, model_name: str, model_info: dict, item, blocking: bool) -> bool:
-        """Put an item on a model's queue. In live mode a full queue for 5 s drops it; in
-        replay nothing may be dropped, so wait (and fail loudly if the worker died)."""
         while True:
             try:
                 model_info["queue"].put(item, block=True, timeout=5.0)
@@ -354,8 +291,6 @@ class MultiModelRunner:
                     raise RuntimeError(f"worker of {model_name} died during the replay")
 
     def _handle_vector(self, vector, blocking: bool = False) -> bool:
-        """Live path for one consumed vector: apply the stride, record, fan out.
-        Returns True if the vector was kept."""
         if not self.sampler.take():
             return False
         if self.recorder:
@@ -368,10 +303,7 @@ class MultiModelRunner:
         for model_name, model_info in self.models.items():
             self._put(model_name, model_info, vector, blocking)
 
-    # ----------------------------------------------------------------- main loops
-
     def _run_loop(self):
-        """Main consumption loop - stride, record and fan vectors out to all models."""
         print("=" * 60)
         print("Starting message consumption")
         print("Press Ctrl+C to stop")
@@ -432,7 +364,6 @@ class MultiModelRunner:
             self._shutdown()
 
     def _run_replay(self, sample_file: str, total: int):
-        """Feed the recorded vectors to the workers, in order, dropping nothing."""
         print("=" * 60)
         print("Starting replay")
         print("=" * 60)
@@ -464,14 +395,9 @@ class MultiModelRunner:
                 print(f"\n✓ Replay complete: {self.sampled_count:,} vectors sent")
             else:
                 print(f"\n⚠ Replay stopped early after {self.sampled_count:,} vectors")
-            # on a complete replay wait for the workers to finish their backlog
             self._shutdown(drain=finished)
 
     def _report_summary(self):
-        """Always printed at shutdown. In live mode it also checks the bookkeeping (every
-        kept vector was recorded, and kept == consumed // stride) and, if a recording was
-        made, writes it next to the file as vectors_sample.summary.json so that
-        `make archive-run` can cross-check the archived sample against it."""
         print("\n" + "=" * 60)
         print("Run summary")
         print("=" * 60)
@@ -524,16 +450,11 @@ class MultiModelRunner:
         self.running = False
 
     def _shutdown(self, drain: bool = False):
-        """Gracefully shutdown all workers and consumer.
-
-        drain=True (a completed replay): wait for every worker to score its whole backlog
-        before it is asked to stop, however long that takes."""
         print()
         print("=" * 60)
         print("Shutting down multi-model service")
         print("=" * 60)
 
-        # Send shutdown signal to all workers (None message)
         print("Stopping workers:")
         for model_name, model_info in self.models.items():
             try:
@@ -541,7 +462,6 @@ class MultiModelRunner:
                     if drain:
                         self._put(model_name, model_info, None, blocking=True)
                     else:
-                        # the queue may be full of vectors still to be scored
                         model_info["queue"].put(
                             None, block=True, timeout=LIVE_STOP_WAIT_SEC
                         )
@@ -557,8 +477,6 @@ class MultiModelRunner:
                 if drain:
                     process.join()
                 else:
-                    # a worker scores its whole backlog (up to a full queue of vectors)
-                    # before it reaches the sentinel; `make stop-all` waits 120 s for us
                     process.join(timeout=LIVE_STOP_WAIT_SEC)
 
                 if process.is_alive():
@@ -591,7 +509,6 @@ class MultiModelRunner:
 
 
 def select_models(cli_models, config_dict) -> list:
-    """--models beats the `models:` list of the config beats DEFAULT_MODELS."""
     if cli_models:
         return [m.strip() for m in cli_models.split(",") if m.strip()]
     return list(config_dict.get("models") or DEFAULT_MODELS)

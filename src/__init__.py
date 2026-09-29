@@ -1,3 +1,1 @@
-"""
-RRCF Anomaly Detector - Source package
-"""
+pass

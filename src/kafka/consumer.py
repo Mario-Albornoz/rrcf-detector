@@ -14,10 +14,6 @@ from .metrics import KafkaMetrics
 
 
 def deserialize_vector(msg) -> Optional["NormalizedVectorDto"]:
-    """
-    Deserialize Kafka message to NormalizedVectorDto.
-    Standalone helper for manual consumer loops.
-    """
     try:
         data = orjson.loads(msg.value().decode("utf-8"))
         timestamp = ciso8601.parse_datetime(data["timestamp"])
@@ -38,7 +34,6 @@ def deserialize_vector(msg) -> Optional["NormalizedVectorDto"]:
             warmup_flag=data["warmup_flag"],
             session_fallback_flag=data["session_fallback_flag"],
             seq=int(data.get("seq", 0)),
-            # raw measurements; absent from vectors of handlers before they were added
             has_trade=int(data.get("has_trade", 0)),
             intertick_ms=float(data.get("intertick_ms", 0.0)),
             has_intertick=int(data.get("has_intertick", 0)),
@@ -67,13 +62,7 @@ class NormalizedVectorDto:
     gap_flag: int
     warmup_flag: int
     session_fallback_flag: int
-    # Identifies the message the vector came from (0 if the producer sends none); it is
-    # written to the scores so the evaluation can match a score to an injected message.
     seq: int = 0
-    # The raw measurements behind the z-scores (see the feed handler's NormalizedVector),
-    # recorded so that models can be run on un-normalized features for an ablation.
-    # intertick_ms is only meaningful when has_intertick is 1, price_step when
-    # has_price_step is 1; ref_price is the previous traded price (0 before the first).
     has_trade: int = 0
     intertick_ms: float = 0.0
     has_intertick: int = 0

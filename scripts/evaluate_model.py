@@ -1,39 +1,4 @@
 #!/usr/bin/env python3
-"""
-Multi-Model Anomaly Detection Evaluation
-
-Evaluates and compares multiple anomaly detection models from streaming parquet file.
-Works with data collected by stream_collector.py for real-time evaluation.
-
-Usage:
-    # Basic comparison (no ground truth)
-    python scripts/evaluate_model.py \\
-        --scores-file ./data/run_001/scores.parquet \\
-        --output-dir ./results/run_001
-    
-    # With ground truth for metrics
-    python scripts/evaluate_model.py \\
-        --scores-file ./data/run_001/scores.parquet \\
-        --ground-truth ./ground_truth/anomalies.json \\
-        --output-dir ./results/run_001
-
-Ground truth format (JSON):
-    [
-        {
-            "exchange": "binance",
-            "instrument": "BTC-USDT",
-            "timestamp": "2024-01-01T12:00:00",
-            "type": "silence|lag|spike|gradual"
-        },
-        ...
-    ]
-
-Output:
-    - Model comparison plots (ROC curves, score distributions)
-    - Per-model metrics (if ground truth provided)
-    - Alert level distributions
-    - Statistical summaries
-"""
 
 import argparse
 import json
@@ -59,20 +24,17 @@ from sklearn.metrics import (
 
 
 def load_scores(scores_file: str) -> pd.DataFrame:
-    """Load scores from streaming parquet file."""
     if not os.path.exists(scores_file):
         raise FileNotFoundError(f"Scores file not found: {scores_file}")
     
     df = pd.read_parquet(scores_file)
     print(f"Loaded {len(df)} score records")
-    
-    # Check required columns
+
     required = ["exchange", "instrument", "timestamp", "model", "raw_score", "z_score"]
     missing = [col for col in required if col not in df.columns]
     if missing:
         raise ValueError(f"Missing required columns: {missing}")
-    
-    # Parse timestamp if needed
+
     if df["timestamp"].dtype == "object":
         df["timestamp"] = pd.to_datetime(df["timestamp"])
     
@@ -80,7 +42,6 @@ def load_scores(scores_file: str) -> pd.DataFrame:
 
 
 def load_ground_truth(filepath: str) -> pd.DataFrame:
-    """Load ground truth anomalies from JSON file."""
     if not filepath or not os.path.exists(filepath):
         return pd.DataFrame()
     
@@ -99,11 +60,6 @@ def compute_per_model_metrics(
     ground_truth_df: pd.DataFrame,
     threshold_strategies: Dict
 ) -> Dict[str, Dict]:
-    """
-    Compute metrics for each model separately.
-    
-    Returns nested dict: {model_name: {strategy_name: metrics}}
-    """
     if ground_truth_df.empty:
         print("⚠ No ground truth provided, skipping metric computation")
         return {}
@@ -113,8 +69,7 @@ def compute_per_model_metrics(
     
     for model_name in models:
         model_scores = scores_df[scores_df["model"] == model_name].copy()
-        
-        # Merge with ground truth
+
         merged = model_scores.merge(
             ground_truth_df[["exchange", "instrument", "timestamp", "is_anomaly"]],
             on=["exchange", "instrument", "timestamp"],
@@ -144,8 +99,7 @@ def compute_per_model_metrics(
             }
         
         results[model_name] = model_results
-    
-    # Print summary
+
     print("\n" + "=" * 60)
     print("Per-Model Metrics")
     print("=" * 60)
@@ -165,7 +119,6 @@ def plot_multi_model_roc(
     ground_truth_df: pd.DataFrame,
     output_dir: str
 ):
-    """Generate ROC curves for all models on same plot."""
     if ground_truth_df.empty:
         print("⚠ Skipping ROC curves (no ground truth)")
         return
@@ -177,8 +130,7 @@ def plot_multi_model_roc(
     
     for model_name, color in zip(models, colors):
         model_scores = scores_df[scores_df["model"] == model_name].copy()
-        
-        # Merge with ground truth
+
         merged = model_scores.merge(
             ground_truth_df[["exchange", "instrument", "timestamp", "is_anomaly"]],
             on=["exchange", "instrument", "timestamp"],
@@ -214,11 +166,9 @@ def plot_multi_model_roc(
 
 
 def plot_score_distributions(scores_df: pd.DataFrame, output_dir: str):
-    """Plot score distributions per model (side by side)."""
     models = sorted(scores_df["model"].unique())
     n_models = len(models)
-    
-    # Raw scores
+
     fig, axes = plt.subplots(1, n_models, figsize=(5 * n_models, 5))
     if n_models == 1:
         axes = [axes]
@@ -237,8 +187,7 @@ def plot_score_distributions(scores_df: pd.DataFrame, output_dir: str):
     plt.savefig(output_path, dpi=300, bbox_inches="tight")
     plt.close()
     print(f"✓ Saved raw score distributions to {output_path}")
-    
-    # Z-scores
+
     fig, axes = plt.subplots(1, n_models, figsize=(5 * n_models, 5))
     if n_models == 1:
         axes = [axes]
@@ -263,14 +212,12 @@ def plot_score_distributions(scores_df: pd.DataFrame, output_dir: str):
 
 
 def plot_alert_levels(scores_df: pd.DataFrame, output_dir: str):
-    """Plot alert level distributions per model."""
     if "alert_level" not in scores_df.columns:
         print("⚠ No alert_level column, skipping alert plot")
         return
     
     models = sorted(scores_df["model"].unique())
-    
-    # Count alert levels per model
+
     alert_data = []
     for model in models:
         model_scores = scores_df[scores_df["model"] == model]
@@ -283,10 +230,9 @@ def plot_alert_levels(scores_df: pd.DataFrame, output_dir: str):
             })
     
     alert_df = pd.DataFrame(alert_data)
-    
-    # Stacked bar chart
+
     pivot_df = alert_df.pivot(index="model", columns="alert_level", values="count").fillna(0)
-    pivot_df = pivot_df[["normal", "medium", "high"]]  # Order columns
+    pivot_df = pivot_df[["normal", "medium", "high"]]
     
     colors = {"normal": "green", "medium": "orange", "high": "red"}
     
@@ -309,7 +255,6 @@ def plot_alert_levels(scores_df: pd.DataFrame, output_dir: str):
 
 
 def plot_summary_table(scores_df: pd.DataFrame, output_dir: str):
-    """Generate summary statistics table for all models."""
     models = sorted(scores_df["model"].unique())
     
     summary_data = []
@@ -327,8 +272,7 @@ def plot_summary_table(scores_df: pd.DataFrame, output_dir: str):
         })
     
     summary_df = pd.DataFrame(summary_data)
-    
-    # Create table plot
+
     fig, ax = plt.subplots(figsize=(12, len(models) * 0.5 + 1))
     ax.axis("tight")
     ax.axis("off")
@@ -342,13 +286,11 @@ def plot_summary_table(scores_df: pd.DataFrame, output_dir: str):
     table.auto_set_font_size(False)
     table.set_fontsize(10)
     table.scale(1, 2)
-    
-    # Style header
+
     for i in range(len(summary_df.columns)):
         table[(0, i)].set_facecolor("#40466e")
         table[(0, i)].set_text_props(weight="bold", color="white")
-    
-    # Alternate row colors
+
     for i in range(1, len(summary_df) + 1):
         for j in range(len(summary_df.columns)):
             if i % 2 == 0:
@@ -405,8 +347,7 @@ Examples:
     print("Multi-Model Anomaly Detection Evaluation")
     print("=" * 60)
     print()
-    
-    # Load data
+
     scores_df = load_scores(args.scores_file)
     ground_truth_df = (
         load_ground_truth(args.ground_truth) if args.ground_truth else pd.DataFrame()
@@ -415,8 +356,7 @@ Examples:
     models = scores_df["model"].unique()
     print(f"\nDetected models: {', '.join(models)}")
     print()
-    
-    # Compute metrics if ground truth available
+
     if not ground_truth_df.empty:
         print("=" * 60)
         print("Computing Metrics")
@@ -438,8 +378,7 @@ Examples:
             with open(metrics_file, "w") as f:
                 json.dump(metrics, f, indent=2)
             print(f"\n✓ Saved metrics to {metrics_file}")
-    
-    # Generate plots
+
     print("\n" + "=" * 60)
     print("Generating Plots")
     print("=" * 60)

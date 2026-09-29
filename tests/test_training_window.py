@@ -1,6 +1,3 @@
-"""Frozen baselines train on the whole first day of data (training_days) or on a fixed
-number of vectors (training_samples), with bounded memory."""
-
 import datetime as dt
 
 import numpy as np
@@ -33,7 +30,7 @@ def test_window_ends_at_the_first_vector_of_the_next_day():
     assert not w.ends_before(DAY1)
     assert not w.ends_before(DAY1 + dt.timedelta(hours=8))
     assert w.ends_before(DAY1 + dt.timedelta(days=1))
-    assert not w.ends_after(10**9)   # the count does not end a day-based window
+    assert not w.ends_after(10**9)
 
 
 def test_zscore_trains_on_the_whole_first_day_and_scores_from_the_next():
@@ -42,11 +39,11 @@ def test_zscore_trains_on_the_whole_first_day_and_scores_from_the_next():
     assert all(det.ingest_data(v) is None for v in day1)
     assert not det.is_trained
     first = det.ingest_data(day2[0])
-    assert det.is_trained and first is not None          # the first vector of day 2 is scored
+    assert det.is_trained and first is not None
     m = np.array([[v.z_intertick_fast, v.z_price_step_fast, v.z_intertick_slow, v.z_price_step_slow,
                    v.cusum_intertick, v.cusum_price_step] for v in day1])
     assert np.allclose(det.feature_means, m.mean(axis=0))
-    assert np.allclose(det.feature_stds, m.std(axis=0))  # population std, as before
+    assert np.allclose(det.feature_stds, m.std(axis=0))
 
 
 def test_isoforest_trains_on_a_bounded_uniform_sample_of_the_day():
@@ -64,7 +61,6 @@ def test_reservoir_keeps_at_most_capacity_rows_and_covers_the_whole_stream():
         r.add(np.array([i]))
     s = r.sample()[:, 0]
     assert len(s) == 1000
-    # uniform over the stream: about a quarter of the sample from each quarter
     counts = np.histogram(s, bins=4, range=(0, 100_000))[0]
     assert all(200 < c < 300 for c in counts)
 

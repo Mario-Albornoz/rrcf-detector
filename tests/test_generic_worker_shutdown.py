@@ -1,6 +1,3 @@
-"""The worker must stop on the shutdown sentinel, and it scores every vector it receives (the
-stride is applied upstream, by the runner, not here)."""
-
 import queue
 import threading
 
@@ -22,8 +19,6 @@ class _NeverScoresDetector:
 
 @pytest.mark.parametrize("n_messages", [0, 1, 3, 9, 10, 11, 25])
 def test_worker_exits_on_sentinel_for_any_message_count(n_messages, monkeypatch):
-    # run() installs signal handlers, which only works on the main thread; the worker
-    # itself is driven from a helper thread here, so make that a no-op.
     monkeypatch.setattr("src.detection.generic_worker.signal.signal", lambda *a, **k: None)
 
     input_queue = queue.Queue()
@@ -74,4 +69,4 @@ def test_worker_ingests_every_message_it_receives(n_messages, monkeypatch):
     thread.join(timeout=5)
 
     assert not thread.is_alive()
-    assert detector.ingested == n_messages  # no second stride inside the worker
+    assert detector.ingested == n_messages

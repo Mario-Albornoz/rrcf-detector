@@ -1,16 +1,3 @@
-# TODO: Optimize the detection service it stands at 300 messages/s tops
-"""
-RRCF Anomaly Detection Service - Main Entry Point
-
-Consumes normalized feature vectors from Kafka, routes to worker processes
-for RRCF scoring, and publishes anomaly scores to output Kafka topic.
-
-Usage:
-    python main.py [--config CONFIG_FILE]
-
-    --config: Path to YAML config file (default: config/default.yaml)
-"""
-
 import argparse
 import os
 import signal
@@ -46,7 +33,6 @@ class ServiceRunner:
             "enable.auto.commit": kafka_config.enable_auto_commit,
             "auto.commit.interval.ms": kafka_config.auto_commit_interval_ms,
             "session.timeout.ms": kafka_config.session_timeout_ms,
-            # Note: max.poll.records is Java-only; librdkafka uses poll(timeout) instead
         }
 
         self.consumer = Consumer(consumer_config)

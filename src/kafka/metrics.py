@@ -22,18 +22,14 @@ class KafkaMetrics:
         self._initialized = True
         self.start_time = time.time()
 
-        # Consumer metrics
         self.consumer = MetricsSection("Consumer")
 
-        # Producer metrics
         self.producer = MetricsSection("Producer")
 
-        # Global metrics
         self._last_report_time = time.time()
 
     @classmethod
     def reset(cls):
-        """Reset singleton instance for testing."""
         with cls._lock:
             cls._instance = None
 
@@ -61,11 +57,9 @@ class MetricsSection:
         self.messages_failed = 0
         self.bytes_processed = 0
 
-        # Consumer-specific
         self.deserialization_errors = 0
         self.handler_errors = 0
 
-        # Producer-specific
         self.delivery_errors = 0
         self.delivery_timeouts = 0
 

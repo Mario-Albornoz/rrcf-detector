@@ -1,8 +1,4 @@
-# Baseline Configuration
-
-# Shared settings for all baseline models
 detector:
-  # RRCF & HST & Online-iForest: Window-based settings
   window_size: 256
   min_fill_threshold: 25
   
@@ -10,12 +6,10 @@ detector:
   # day). This is set in model_registry() in scripts/run_multi_model.py, which hard-codes the
   # model settings; the value below is not read.
   training_samples: 20000 
-  
-  # IsoForest specific
+
   n_estimators: 100
   contamination: 0.1
-  
-  # HST specific
+
   n_trees: 25
   height: 8
   
@@ -24,25 +18,22 @@ detector:
     window_size: 226        # Sliding window size
     num_trees: 15            # Number of trees in forest
     max_leaf_samples: 25     # Max samples per leaf before split
-    type: "adaptive"         # "adaptive" or "fixed"
+    type: "adaptive"
     min_fill_threshold: 25   # Warmup samples before scoring
 
-  # RRCF forest: several trees per (exchange, class), CoDisp averaged over the trees
   rrcf_forest:
     num_trees: 5             # cost grows linearly with this
     window_size: 256         # same as rrcf, so only the number of trees differs
     min_fill_threshold: 25
     seed: 42
 
-# Kafka settings (same as default.yaml)
 kafka:
   bootstrap_servers: "localhost:9092"
   consumer_group_id: "rrcf-detector-baselines"
   input_topic: "normalized-vectors"
   output_topic: "anomaly-scores"
   auto_offset_reset: "earliest"
-  
-  # Producer settings
+
   producer:
     linger_ms: 10
     batch_size: 100000
@@ -50,13 +41,10 @@ kafka:
     acks: 1
     retries: 3
 
-# Multiprocessing
 multiprocessing:
   num_workers: 4  # One worker per model (or scale per model)
   health_check_interval: 30
 
-# Model Selection
-# To run specific models, modify this list
 models:
   #- rrcf
   #- rrcf_forest
@@ -65,7 +53,6 @@ models:
   #- halfspace
   # - onlineiforest  
 
-# Stream Collector Configuration
 stream_collector:
   output_file: "./data/scores.parquet"
   buffer_size: 1000

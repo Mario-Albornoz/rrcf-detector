@@ -1,24 +1,3 @@
-"""
-The sampled vector stream: choose it once, record it, replay it.
-
-The models do not ingest every normalized vector, only every STRIDE-th one (a CPU
-workaround, see scripts/run_multi_model.py). Which vectors those are depends on the order
-in which one consumer sees the messages of the topic's partitions, and that order changes
-from one consumption to the next. Two runs of the pipeline therefore score different
-samples of the same stream, and their scores cannot be compared row by row.
-
-The fix is to make that choice exactly once. The runner applies the stride to the stream it
-reads from Kafka (StrideSampler), hands the surviving vectors to every model, and can record
-them (VectorSampleWriter). A later run reads the recorded file instead of Kafka
-(read_vector_sample) and feeds the models the same vectors in the same order, so any model,
-in any run, scores the same rows.
-
-File layout (Parquet, zstd): one row per vector, in ingestion order. `stream_index` is the
-1-based position of the vector in the full consumed stream (a multiple of the stride).
-Timestamps are stored as integer microseconds since the epoch (UTC), which is what
-datetime holds, so a vector read back is field-for-field equal to the one that was written.
-"""
-
 import datetime as dt
 import os
 from pathlib import Path
@@ -47,7 +26,6 @@ SAMPLE_SCHEMA = pa.schema(
         ("warmup_flag", pa.int64()),
         ("session_fallback_flag", pa.int64()),
         ("seq", pa.int64()),
-        # raw measurements behind the z-scores (added later: older recordings lack them)
         ("has_trade", pa.int64()),
         ("intertick_ms", pa.float64()),
         ("has_intertick", pa.int64()),
@@ -57,8 +35,6 @@ SAMPLE_SCHEMA = pa.schema(
     ]
 )
 
-# Columns a recording made before the raw measurements were added does not have, with the
-# value a replay of such a file gives them.
 RAW_DEFAULTS = {
     "has_trade": 0,
     "intertick_ms": 0.0,
@@ -73,9 +49,9 @@ _ONE_US = dt.timedelta(microseconds=1)
 
 
 def _to_us(ts: dt.datetime) -> int:
-    if ts.tzinfo is None:  # the handler always sends a zone; a naive time is taken as UTC
+    if ts.tzinfo is None:
         ts = ts.replace(tzinfo=dt.timezone.utc)
-    return (ts - _EPOCH) // _ONE_US  # exact integer arithmetic, no float rounding
+    return (ts - _EPOCH) // _ONE_US
 
 
 def _from_us(us: int) -> dt.datetime:
@@ -83,9 +59,6 @@ def _from_us(us: int) -> dt.datetime:
 
 
 class StrideSampler:
-    """Keeps every `stride`-th item of a stream: the 1st..(stride-1)-th are skipped, the
-    stride-th is kept, and so on. `seen` counts every item offered, kept or not."""
-
     def __init__(self, stride: int = 10):
         if stride < 1:
             raise ValueError(f"stride must be >= 1, got {stride}")
@@ -98,12 +71,6 @@ class StrideSampler:
 
 
 class VectorSampleWriter:
-    """Buffered Parquet writer for the sampled vectors.
-
-    Rows go to `<path>.partial` and the file is renamed to `<path>` only by close(), once
-    the Parquet footer is written. A file at `path` is therefore always complete; a run that
-    was killed leaves only the .partial file behind."""
-
     def __init__(self, path: str, buffer_rows: int = 50_000):
         self.path = str(path)
         self.partial_path = self.path + ".partial"
@@ -154,7 +121,7 @@ class VectorSampleWriter:
 
     def close(self) -> None:
         self.flush()
-        if self._writer is None:  # nothing was recorded: still leave a valid, empty file
+        if self._writer is None:
             self._writer = pq.ParquetWriter(self.partial_path, SAMPLE_SCHEMA, compression="zstd")
         self._writer.close()
         self._writer = None
@@ -163,8 +130,6 @@ class VectorSampleWriter:
 
 
 def summary_path(sample_path: str) -> str:
-    """Where the runner writes its own account of a recording: vectors_sample.summary.json
-    next to vectors_sample.parquet (what it consumed, kept and recorded)."""
     return str(Path(sample_path).with_suffix(".summary.json"))
 
 
@@ -173,10 +138,8 @@ def sample_row_count(path: str) -> int:
 
 
 def read_vector_sample(path: str, batch_rows: int = 50_000) -> Iterator[NormalizedVectorDto]:
-    """Yield the recorded vectors in the order they were written. A recording made before
-    the raw measurements were added replays with their defaults (RAW_DEFAULTS)."""
     pf = pq.ParquetFile(path)
-    if pf.metadata.num_row_groups == 0:  # an empty recording; iter_batches raises on it
+    if pf.metadata.num_row_groups == 0:
         return
     missing = [name for name in RAW_DEFAULTS if name not in pf.schema_arrow.names]
     for batch in pf.iter_batches(batch_size=batch_rows):

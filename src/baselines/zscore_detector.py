@@ -1,17 +1,3 @@
-"""
-Z-Score Threshold Baseline Detector
-
-Per-feature statistical threshold model. Computes mean and standard deviation
-for each feature over training data (first two weeks), then freezes.
-Score is the maximum absolute z-score across all features.
-
-Represents status quo production tools (e.g., Geneos-style monitoring).
-
-Training Assumption:
-    First two weeks of unmodified replay data (no injected anomalies).
-    This assumption is documented in the thesis methodology section.
-"""
-
 import numpy as np
 from typing import Dict, Optional
 
@@ -23,18 +9,10 @@ from src.kafka.consumer import NormalizedVectorDto
 
 
 class ZScoreDetector(BaseDetector):
-    """
-    Frozen statistical threshold baseline.
-    
-    Training phase: Collects statistics on first N samples.
-    Frozen phase: Uses frozen statistics to score new samples.
-    """
-    
     def __init__(self, config: dict):
         self.config = config
         self.training_samples = config.get("training_samples", 20000)
         self.window = TrainingWindow(self.training_samples, config.get("training_days"))
-        # Ablation options (defaults = the evaluated model)
         self.name = config.get("name", "zscore")
         self.features = resolve(config.get("features", "all"))
 
@@ -43,7 +21,6 @@ class ZScoreDetector(BaseDetector):
 
         self.feature_means = None
         self.feature_stds = None
-        # running (Welford) sums: a whole training day does not have to be kept in memory
         self._train_mean = np.zeros(len(self.features))
         self._train_m2 = np.zeros(len(self.features))
         
@@ -55,7 +32,7 @@ class ZScoreDetector(BaseDetector):
         features = np.array(extract(data, self.features))
 
         if not self.is_trained and self.window.ends_before(data.timestamp):
-            self._train()   # the first vector after the training days is scored
+            self._train()
 
         if not self.is_trained:
             self.sample_count += 1
@@ -83,7 +60,6 @@ class ZScoreDetector(BaseDetector):
         }
     
     def _train(self):
-        """Freeze the training statistics (population mean and standard deviation)."""
         self.feature_means = self._train_mean.copy()
         self.feature_stds = np.sqrt(self._train_m2 / max(self.sample_count, 1))
 
@@ -100,12 +76,10 @@ class ZScoreDetector(BaseDetector):
         print(f"[ZScoreDetector] Feature stds: {self.feature_stds}")
     
     def _compute_score(self, features: np.ndarray) -> float:
-        """Compute max absolute z-score across features."""
         z_scores = np.abs((features - self.feature_means) / self.feature_stds)
         return float(np.max(z_scores))
     
     def _update_stats(self, raw_score: float):
-        """Update rolling statistics using Welford's algorithm."""
         self.score_count += 1
         delta = raw_score - self.stats.mean
         self.stats.mean += delta / self.score_count

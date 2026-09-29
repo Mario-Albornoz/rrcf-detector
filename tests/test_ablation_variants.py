@@ -1,5 +1,3 @@
-"""Ablation variants: rrcf_forest and zscore with one property changed (docs/Ablation_Plan.md)."""
-
 import datetime as dt
 import importlib.util
 from pathlib import Path
@@ -54,7 +52,7 @@ def test_default_features_are_the_six_normalized_ones():
 
 def test_raw_features_are_derived_from_the_recorded_measurements():
     v = _vec(0, intertick_ms=2000.0, has_intertick=1, price_step=0.5, has_price_step=1, ref_price=100.0)
-    assert extract(v, resolve("raw2")) == [2000.0, 50.0]   # 0.5 on 100 = 50 bp
+    assert extract(v, resolve("raw2")) == [2000.0, 50.0]
     first_of_day = _vec(1, intertick_ms=0.0, has_intertick=0, price_step=0.0, has_price_step=0, ref_price=0.0)
     assert extract(first_of_day, resolve("raw2")) == [0.0, 0.0]
 
@@ -86,9 +84,9 @@ def test_cold_forest_emits_the_cold_score_so_every_vector_stays_scorable():
     emitting = RRCFForestDetector({"num_trees": 2, "min_fill_threshold": 5, "cold_score": 0.0})
     r_silent = [silent.ingest_data(_vec(k)) for k in range(8)]
     r_emit = [emitting.ingest_data(_vec(k)) for k in range(8)]
-    assert r_silent[:4] == [None] * 4                               # cold: nothing
-    assert all(r["raw_score"] == 0.0 for r in r_emit[:4])           # cold: a non-alerting 0
-    assert r_silent[4:] and all(r is not None for r in r_emit)      # warm: scored as before
+    assert r_silent[:4] == [None] * 4
+    assert all(r["raw_score"] == 0.0 for r in r_emit[:4])
+    assert r_silent[4:] and all(r is not None for r in r_emit)
     assert [r["raw_score"] for r in r_silent[4:]] == [r["raw_score"] for r in r_emit[4:]]
 
 

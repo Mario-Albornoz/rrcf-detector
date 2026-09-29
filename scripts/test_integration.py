@@ -1,33 +1,18 @@
 #!/usr/bin/env python3
-"""
-Integration test for multi-model pipeline.
-
-Tests the complete flow without requiring Kafka:
-1. All 5 detectors can be imported and instantiated
-2. All detectors can process dummy vectors
-3. All detectors return correct output format
-4. Multi-model runner can be initialized
-5. Stream collector and evaluator can be imported
-
-Run before full simulation to catch configuration/dependency issues.
-"""
 
 import sys
 from datetime import datetime
 from pathlib import Path
 
-# Add project root to path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 def test_imports():
-    """Test 1: Verify all imports work."""
     print("=" * 60)
     print("Test 1: Imports")
     print("=" * 60)
     
     try:
-        # Baseline detectors
         from src.baselines import (
             BaseDetector,
             ZScoreDetector,
@@ -37,18 +22,15 @@ def test_imports():
             RRCFDetectorAdapter,
         )
         print("✓ All detector classes imported")
-        
-        # Worker and config
+
         from src.detection.generic_worker import GenericWorker
         from src.config import ServiceConfig
         from src.kafka.consumer import NormalizedVectorDto
         print("✓ Worker and config classes imported")
-        
-        # Multi-model runner (don't instantiate yet, just import)
+
         import scripts.run_multi_model
         print("✓ Multi-model runner imported")
-        
-        # Evaluation
+
         import scripts.evaluate_model
         print("✓ Evaluation script imported")
         
@@ -63,7 +45,6 @@ def test_imports():
 
 
 def test_detector_instantiation():
-    """Test 2: Verify all detectors can be instantiated."""
     print("=" * 60)
     print("Test 2: Detector Instantiation")
     print("=" * 60)
@@ -117,14 +98,12 @@ def test_detector_instantiation():
 
 
 def test_data_ingestion(detectors):
-    """Test 3: Verify all detectors can process dummy data."""
     print("=" * 60)
     print("Test 3: Data Ingestion")
     print("=" * 60)
     
     from src.kafka.consumer import NormalizedVectorDto
-    
-    # Create dummy vector
+
     dummy_vector = NormalizedVectorDto(
         exchange="binance",
         instrument="BTC-USDT",
@@ -139,15 +118,13 @@ def test_data_ingestion(detectors):
     )
     
     results = {}
-    
-    # Warm up detectors (feed enough samples to get past cold start)
+
     print("Warming up detectors (feeding 50 samples)...")
     for i in range(50):
         for model_name, detector in detectors.items():
             detector.ingest_data(dummy_vector)
     print("✓ Warmup complete\n")
-    
-    # Now test scoring
+
     print("Testing scoring:")
     for model_name, detector in detectors.items():
         try:
@@ -156,8 +133,7 @@ def test_data_ingestion(detectors):
             if result is None:
                 print(f"⚠ {model_name}: Still in cold start (increase warmup)")
                 continue
-            
-            # Verify output format
+
             required_keys = ["raw_score", "z_score", "stats"]
             missing_keys = [k for k in required_keys if k not in result]
             
@@ -182,7 +158,6 @@ def test_data_ingestion(detectors):
 
 
 def test_output_format(detectors, results):
-    """Test 4: Verify output matches expected format for Kafka publishing."""
     print("=" * 60)
     print("Test 4: Output Format Validation")
     print("=" * 60)
@@ -201,15 +176,13 @@ def test_output_format(detectors, results):
         cusum_intertick=0.0,
         cusum_price_step=0.0
     )
-    
-    # Simulate what GenericWorker does
+
     for model_name, detector in detectors.items():
         result = results.get(model_name)
         if result is None:
             print(f"⚠ {model_name}: Skipping (no result)")
             continue
-        
-        # Build output message (same as GenericWorker)
+
         alert_level = detector.determine_alert_level(result["z_score"])
         
         score_output = {
@@ -217,7 +190,7 @@ def test_output_format(detectors, results):
             "instrument": dummy_vector.instrument,
             "instrument_class": dummy_vector.instrument_class,
             "timestamp": dummy_vector.timestamp.isoformat(),
-            "model": detector.get_model_name(),  # ← KEY FIELD!
+            "model": detector.get_model_name(),
             "raw_score": result["raw_score"],
             "z_score": result["z_score"],
             "alert_level": alert_level,
@@ -225,8 +198,7 @@ def test_output_format(detectors, results):
             "stats_std": result["stats"]["std"],
             "stats_count": result["stats"]["count"],
         }
-        
-        # Verify all required fields present
+
         required_fields = [
             "exchange", "instrument", "instrument_class", "timestamp",
             "model", "raw_score", "z_score", "alert_level",
@@ -247,7 +219,6 @@ def test_output_format(detectors, results):
 
 
 def test_model_name_uniqueness(detectors):
-    """Test 5: Verify all model names are unique."""
     print("=" * 60)
     print("Test 5: Model Name Uniqueness")
     print("=" * 60)
@@ -277,7 +248,6 @@ def test_model_name_uniqueness(detectors):
 
 
 def test_dependencies():
-    """Test 6: Verify required packages are installed."""
     print("=" * 60)
     print("Test 6: Dependencies")
     print("=" * 60)
@@ -318,46 +288,38 @@ def main():
     print("Multi-Model Pipeline Integration Test")
     print("=" * 60)
     print()
-    
-    # Track results
+
     tests_passed = 0
     tests_total = 6
-    
-    # Test 1: Imports
+
     if test_imports():
         tests_passed += 1
     else:
         print("⚠ Stopping tests (import failure)")
         sys.exit(1)
-    
-    # Test 2: Instantiation
+
     success, detectors = test_detector_instantiation()
     if success:
         tests_passed += 1
     else:
         print("⚠ Stopping tests (instantiation failure)")
         sys.exit(1)
-    
-    # Test 3: Data ingestion
+
     success, results = test_data_ingestion(detectors)
     if success:
         tests_passed += 1
     else:
         print("⚠ Continuing with remaining tests...")
-    
-    # Test 4: Output format
+
     if test_output_format(detectors, results):
         tests_passed += 1
-    
-    # Test 5: Model name uniqueness
+
     if test_model_name_uniqueness(detectors):
         tests_passed += 1
-    
-    # Test 6: Dependencies
+
     if test_dependencies():
         tests_passed += 1
-    
-    # Summary
+
     print("=" * 60)
     print("Test Summary")
     print("=" * 60)

@@ -1,57 +1,4 @@
 #!/usr/bin/env python3
-"""
-Thesis evaluation: RQ1 (four-phase feed-degradation detection) for one detector.
-
-Ground truth is the simulator's episode file (one row per injected anomaly episode,
-not per tick). Each phase is scored against its own episodes and by the component
-responsible for it:
-
-  phase 1  gradual tick-rate decline   RRCF scores      window detection + control group
-  phase 2  contextual price anomalies  RRCF scores      exact-tick and short-window recall
-  phase 3  feed silence                silence log      match by the silence's last tick
-  phase 4  point failures              implausible price: RRCF scores
-                                       malformed ISIN / timestamp inversion: validation log
-
-RRCF and the baselines are scored on the same protocol: pass any scores parquet with
-exchange, instrument, timestamp_ms and a score column (raw_score by default). The silence
-and validation logs are rule based and produced by the feed-handler; they are not part of
-the RRCF-vs-baseline comparison, so omit them when evaluating a baseline.
-
-Key points of the protocol (see docs/EVALUATION_METHODOLOGY.md at the repo root):
-
-  * Episode level, not tick level. Every metric is per episode (or per instrument),
-    never per injected row, so different phases cannot share or inflate counts.
-  * Scorable episodes. The worker scores one vector in ten, so an injected tick is
-    often never scored. Recall is reported over scorable episodes (headline) and over
-    all episodes. Scorable depends only on the stride, never on whether the detector
-    fired, and is defined on the score records, not on the alerts.
-  * One-sided alerts: an alert is score >= threshold. Every model's raw score is
-    higher-is-more-anomalous (isoforest is negated at the source).
-  * Raw scores, thresholds from a false-alarm budget (--threshold-mode far, the default for
-    raw_score). The detectors' own z_score is normalised by the mean and std of every score
-    since the start of the run: one extreme score inflates that std for good and every
-    later z collapses to about 0 (and halfspace's score, capped at 1, can never reach z = 2).
-    Raw scores are on a different scale per model, so a threshold is expressed as the
-    clean-day false-alarm rate it gives: the score quantile that raises that many alerts per
-    1000 vectors. It is calibrated on the first clean day after the warm-up and the false-alarm
-    rate is reported on the other clean days (held out), so the reported rate is not true by
-    construction. --threshold-mode absolute keeps fixed thresholds (the previous behaviour).
-  * Controls instead of a time-shift null: unaffected instruments in the same window
-    (phase 1, 3), untouched ticks (phase 2, 4) and clean days give the false-alarm
-    rate under identical market conditions.
-  * The operating threshold can be fixed from the clean days (--target-far) so it is
-    never tuned on the injected data.
-  * Confidence intervals come from a bootstrap over instruments (episodes of one
-    instrument are correlated).
-
-Usage:
-    python scripts/evaluate_thesis.py \\
-        --episodes ../price-feed-simulator/anomaly_log_episodes.csv \\
-        --scores ./data/scores_rrcf.parquet \\
-        --silence-log ../feed-handler/data/eval/silence_alerts.csv \\
-        --validation-log ../feed-handler/data/eval/validation_alerts.csv \\
-        --output ../results/thesis_YYYYMMDD_HHMMSS
-"""
 
 import argparse
 import hashlib
@@ -77,11 +24,7 @@ PHASE_NAMES = {
 }
 
 
-# --------------------------------------------------------------------------- loading
-
-
 def _fingerprint(path: Path) -> Dict:
-    """Size, sha256 and row count of an input, so a result can be traced to its data."""
     digest = hashlib.sha256()
     with open(path, "rb") as f:
         for chunk in iter(lambda: f.read(8 << 20), b""):
@@ -98,7 +41,6 @@ def _fingerprint(path: Path) -> Dict:
 
 
 def load_scores(path: Path, score_column: str = "z_score") -> pd.DataFrame:
-    """Scores with the chosen score column as 'score'."""
     import pyarrow.parquet as pq
 
     names = pq.ParquetFile(path).schema_arrow.names
@@ -123,7 +65,7 @@ def load_episodes(path: Path) -> pd.DataFrame:
     df["Detail"] = df["Detail"].fillna("")
 
     if "SecType" in df.columns:
-        df = df[df["SecType"] == "E"].copy()  # the feed-handler only forwards equities
+        df = df[df["SecType"] == "E"].copy()
     else:
         print("  WARNING: episode file has no SecType column; index instruments are included")
 
@@ -133,8 +75,6 @@ def load_episodes(path: Path) -> pd.DataFrame:
     df["end"] = df["EndMs"].astype(np.int64)
     df["observed"] = df["ObservedMs"].fillna(df["StartMs"]).astype(np.int64)
     df["resume"] = df["ResumeMs"]
-    # The silence detector runs on the whole-second update time, so a silence's LastSeen is
-    # on that clock; the ground truth records the last delivered message on it too.
     ld_clock = _extract_int(df["Detail"], "last_delivered_time_ms")
     df["last_delivered"] = ld_clock.where(ld_clock.notna(), df["LastDeliveredMs"])
     df["type"] = df["AnomalyType"]
@@ -148,10 +88,8 @@ def load_episodes(path: Path) -> pd.DataFrame:
 def load_silence(path: Path, exclude_flush: bool) -> pd.DataFrame:
     df = pd.read_csv(path)
     if exclude_flush and "Trigger" in df.columns:
-        df = df[df["Trigger"] != "flush"]  # end-of-stream artefacts, not live detections
+        df = df[df["Trigger"] != "flush"]
     df["key"] = df["Exchange"].astype(str) + "|" + df["Instrument"].astype(str)
-    # how many times its threshold (the instrument's own gap quantile) the silence lasted;
-    # alerts are logged at the configured multiplier, stricter ones are subsets
     df["mult"] = df["ElapsedMs"] / df["ThresholdMs"].replace(0, np.nan)
     return df.reset_index(drop=True)
 
@@ -169,7 +107,6 @@ def _band(values: pd.Series, spec) -> pd.Series:
 
 
 def load_instruments(path: Path) -> pd.DataFrame:
-    """Per-instrument-day rows and trades, written by the simulator before any injection."""
     df = pd.read_csv(path, dtype={"Date": str})
     df = df[df["SecType"] == "E"].copy()
     df["key"] = df["Exchange"].astype(str) + "|" + df["InstrumentID"].astype(str)
@@ -178,7 +115,6 @@ def load_instruments(path: Path) -> pd.DataFrame:
 
 
 def stratify(ep, scorable, detected, column, args, rng):
-    """Recall per stratum (None when the strata are not available)."""
     if column not in ep.columns or ep[column].isna().all():
         return None
     codes = ep["code"].to_numpy()
@@ -201,12 +137,7 @@ def load_validation(path: Path) -> pd.DataFrame:
     return df.reset_index(drop=True)
 
 
-# ----------------------------------------------------------------------- key/time index
-
-
 class KeyIndex:
-    """Maps the 'exchange|instrument' strings of every input onto one integer code."""
-
     def __init__(self, *series: pd.Series):
         self.index = pd.Index(pd.concat(series, ignore_index=True).unique())
 
@@ -219,16 +150,12 @@ def composite(codes: np.ndarray, ts: np.ndarray) -> np.ndarray:
 
 
 class Timeline:
-    """Events sorted by (instrument, time), answering 'any event in [lo, hi]?' for many
-    episodes at once with binary search."""
-
     def __init__(self, codes: np.ndarray, ts: np.ndarray, values: Optional[np.ndarray] = None,
                  seqs: Optional[np.ndarray] = None):
         keys = composite(codes, ts)
         order = np.argsort(keys, kind="stable")
         self.keys = keys[order]
         self.values = None if values is None else np.asarray(values)[order]
-        # message sequence numbers (0 = unknown), when the scores carry them
         self.seqs = None if seqs is None or not np.any(seqs) else np.asarray(seqs)[order]
 
     def __len__(self) -> int:
@@ -247,7 +174,6 @@ class Timeline:
         return right - left
 
     def first(self, codes: np.ndarray, lo: np.ndarray, hi: np.ndarray):
-        """First event time in [lo, hi] per episode, with a mask of which had one."""
         if len(self.keys) == 0:
             return np.zeros(len(codes), dtype=bool), np.full(len(codes), -1, dtype=np.int64)
         left = np.searchsorted(self.keys, composite(codes, lo), side="left")
@@ -257,12 +183,7 @@ class Timeline:
         return found, times
 
 
-# --------------------------------------------------------------------------- statistics
-
-
 def bootstrap_ci(codes: np.ndarray, hits: np.ndarray, n: int, rng) -> Optional[List[float]]:
-    """95% CI of mean(hits), resampling whole instruments (episodes of one instrument
-    are correlated, so resampling episodes would be too optimistic)."""
     if len(hits) == 0 or n <= 0:
         return None
     hits = np.asarray(hits, dtype=float)
@@ -278,8 +199,6 @@ def bootstrap_ci(codes: np.ndarray, hits: np.ndarray, n: int, rng) -> Optional[L
 
 
 def bootstrap_diff_ci(a, b, n: int, rng) -> Optional[List[float]]:
-    """95% CI of mean(a) - mean(b) with independent instrument resampling. a and b are
-    (codes, hits) pairs."""
     if len(a[1]) == 0 or len(b[1]) == 0 or n <= 0:
         return None
 
@@ -309,7 +228,6 @@ def _quantiles(values: np.ndarray) -> Dict:
 
 
 def recall_block(codes, scorable, detected, latency_ms, n_boot, rng) -> Dict:
-    """Recall over scorable episodes (headline) and over all episodes."""
     codes = np.asarray(codes)
     scorable = np.asarray(scorable, dtype=bool)
     detected = np.asarray(detected, dtype=bool)
@@ -326,12 +244,7 @@ def recall_block(codes, scorable, detected, latency_ms, n_boot, rng) -> Dict:
     }
 
 
-# ------------------------------------------------------------------------ RRCF phases
-
-
 def eval_point_episodes(ep, scores_tl, alerts_tl, args, rng, label) -> Dict:
-    """Single-tick anomalies: is the injected tick's own vector an alert (strict), or
-    is there an alert on the instrument within point_window_ms afterwards (lenient)?"""
     if len(ep) == 0:
         return {"episodes": 0}
     codes = ep["code"].to_numpy()
@@ -340,8 +253,6 @@ def eval_point_episodes(ep, scores_tl, alerts_tl, args, rng, label) -> Dict:
 
     seq = ep["seq"].to_numpy()
     if scores_tl.seqs is not None and len(seq) and (seq > 0).all():
-        # exact identity: the injected message's own vector, however many of the instrument's
-        # messages share its millisecond
         scorable = np.isin(seq, scores_tl.seqs)
         strict = np.isin(seq, alerts_tl.seqs)
         matching = "message sequence number"
@@ -366,8 +277,6 @@ def eval_point_episodes(ep, scores_tl, alerts_tl, args, rng, label) -> Dict:
 
 
 def eval_stale_runs(ep, scores_tl, alerts_tl, args, rng) -> Dict:
-    """Stale-price runs. Only runs in which the frozen price actually differed from the
-    true one at least once can be detected, so those are the effective episodes."""
     if len(ep) == 0:
         return {"episodes": 0}
     effective = ep[ep["changed_ticks"].fillna(1) > 0]
@@ -389,8 +298,6 @@ def eval_stale_runs(ep, scores_tl, alerts_tl, args, rng) -> Dict:
 
 
 def eval_phase1(ep, scores_df, scores_tl, alerts_tl, args, rng, activity=None) -> Dict:
-    """Tick-rate decline. Affected instruments are compared with unaffected instruments
-    that were active in the same window, so market conditions are identical."""
     if len(ep) == 0:
         return {"episodes": 0}
 
@@ -416,7 +323,6 @@ def eval_phase1(ep, scores_df, scores_tl, alerts_tl, args, rng, activity=None) -
         if "rows_band" in group.columns:
             aff_tier.append(group["rows_band"].astype(object).to_numpy())
 
-        # control group: instruments scored in this window that had no episode
         window = scores_df[(scores_df["ts"] >= start) & (scores_df["ts"] <= end)]
         active = np.unique(window["code"].to_numpy())
         control = np.setdiff1d(active, codes)
@@ -479,13 +385,7 @@ def eval_phase1(ep, scores_df, scores_tl, alerts_tl, args, rng, activity=None) -
     }
 
 
-# ------------------------------------------------------------ silence (phase 3)
-
-
 def eval_phase3(ep, silence, index, scores_df, args, rng) -> Dict:
-    """Feed silence, against the feed-handler's silence log. An alert answers an
-    episode when it is about the silence that began at the blackout's previous tick
-    (LastSeen == LastDelivered), else when it was detected inside the blackout."""
     if len(ep) == 0:
         return {"episodes": 0}
     if silence is None:
@@ -518,7 +418,6 @@ def eval_phase3(ep, silence, index, scores_df, args, rng) -> Dict:
         match_window = by_detected.count(codes, start, resume) > 0
         detected = np.where(has_ld, match_last, match_window)
 
-        # detection time of the matching alert, for latency
         det_times = _detected_time(sub, index, codes, np.where(has_ld, ld, start), has_ld, args, resume)
         latency_start = np.where(detected, det_times - start, 0)
         latency_last = np.where(detected & has_ld, det_times - ld, 0)
@@ -529,7 +428,6 @@ def eval_phase3(ep, silence, index, scores_df, args, rng) -> Dict:
         block["latency_from_last_tick_ms"] = _quantiles(latency_last[warm & detected & has_ld])
         block["latency_from_blackout_start_ms"] = _quantiles(latency_start[warm & detected])
 
-        # precision inside the phase-3 scope: alerts on the affected exchange(s)
         in_scope = sub[
             sub["Exchange"].isin(exchanges)
             & (sub["ObservedAtMs"] >= scope_lo)
@@ -542,7 +440,6 @@ def eval_phase3(ep, silence, index, scores_df, args, rng) -> Dict:
             "precision": _rate(matched),
         }
 
-        # control: instruments on the same exchange(s) that had no blackout
         window = scores_df[(scores_df["ts"] >= scope_lo) & (scores_df["ts"] <= scope_hi)]
         active = np.unique(window["code"].to_numpy())
         control = np.setdiff1d(active, codes)
@@ -563,7 +460,6 @@ def eval_phase3(ep, silence, index, scores_df, args, rng) -> Dict:
 
 
 def _detected_time(sub, index, codes, anchor, has_ld, args, resume) -> np.ndarray:
-    """DetectedAt of the alert answering each episode (0 where none)."""
     out = np.zeros(len(codes), dtype=np.int64)
     if len(sub) == 0:
         return out
@@ -581,7 +477,6 @@ def _detected_time(sub, index, codes, anchor, has_ld, args, resume) -> np.ndarra
 
 
 def _alerts_matching_episodes(alerts, codes, start, resume, ld, has_ld, args) -> np.ndarray:
-    """For each alert: does it answer some episode?"""
     if len(alerts) == 0:
         return np.zeros(0, dtype=bool)
     a_codes = alerts["code"].to_numpy()
@@ -589,7 +484,6 @@ def _alerts_matching_episodes(alerts, codes, start, resume, ld, has_ld, args) ->
     by_window_start = Timeline(codes[~has_ld], start[~has_ld])
     m1 = by_ld.count(a_codes, alerts["LastSeenMs"].to_numpy() - args.match_tol_ms,
                      alerts["LastSeenMs"].to_numpy() + args.match_tol_ms) > 0
-    # alerts about instruments without LastDelivered: detected inside a blackout window
     m2 = np.zeros(len(alerts), dtype=bool)
     if (~has_ld).any():
         c2, s2, r2 = codes[~has_ld], start[~has_ld], resume[~has_ld]
@@ -602,13 +496,7 @@ def _alerts_matching_episodes(alerts, codes, start, resume, ld, has_ld, args) ->
     return m1 | m2
 
 
-# ------------------------------------------------------------ validator (phase 4)
-
-
 def eval_validation(ep, validation, index, args, rng) -> Dict:
-    """Malformed ISIN and timestamp inversion, against the validator log. An alert
-    answers an episode when it is on the same instrument at the tick time the feed
-    handler saw (ObservedMs)."""
     out = {}
     for ep_type, alert_type in (
         ("malformed_isin", "MALFORMED_ISIN"),
@@ -631,15 +519,12 @@ def eval_validation(ep, validation, index, args, rng) -> Dict:
         block = recall_block(codes, np.ones(len(codes), bool), detected, None, args.bootstrap, rng)
 
         if ep_type == "timestamp_inversion":
-            # a rewind is only visible to a per-instrument monotonicity check if it lands
-            # before the instrument's previous tick (by more than the tolerance)
             prev = sub["prev_ms"].to_numpy(dtype=float)
             detectable = np.where(np.isnan(prev), False, obs < prev - args.validator_tolerance_ms)
             block["detectable_episodes"] = int(detectable.sum())
             block["recall_detectable"] = _rate(detected[detectable])
             block["recall_detectable_ci95"] = bootstrap_ci(codes[detectable], detected[detectable], args.bootstrap, rng)
 
-        # false positives: validator alerts that answer no episode of this type
         answered = Timeline(codes, obs).count(val["code"].to_numpy(),
                                               val["TickTimeMs"].to_numpy() - tol,
                                               val["TickTimeMs"].to_numpy() + tol) > 0
@@ -649,9 +534,6 @@ def eval_validation(ep, validation, index, args, rng) -> Dict:
     return out
 
 
-# -------------------------------------------------------------- false-alarm rates
-
-
 def _utc_day(ms: np.ndarray) -> np.ndarray:
     return pd.to_datetime(ms, unit="ms", utc=True).strftime("%Y-%m-%d").to_numpy()
 
@@ -659,17 +541,6 @@ def _utc_day(ms: np.ndarray) -> np.ndarray:
 def clean_days(scores_df, episodes, warmup_days: int, explicit: Optional[List[str]],
                calibration: Optional[List[str]] = None, held_out: bool = False,
                run_days: Optional[List[str]] = None) -> Dict:
-    """Clean days (no episode starts), minus the warm-up.
-
-    With held_out, the thresholds are calibrated on 'calibration' (default: the first
-    headline day) and the headline false-alarm rate is reported on the remaining days.
-    Without it, or with a single headline day, both are the headline days (in-sample).
-
-    run_days are the days of the run itself (from the simulator's per-day instrument file).
-    They matter for models without scores on the first day: the frozen baselines train on
-    the whole warm-up day and score from the next one, and the days of their scores alone
-    would make the calibration day look like the warm-up day.
-    """
     all_days = sorted(set(_utc_day(scores_df["ts"].to_numpy())) | set(run_days or []))
     injected = set(_utc_day(episodes["start"].to_numpy())) if len(episodes) else set()
     clean = [d for d in all_days if d not in injected]
@@ -685,17 +556,12 @@ def clean_days(scores_df, episodes, warmup_days: int, explicit: Optional[List[st
 
 
 def thresholds_for_far(scores_df, days: List[str], targets: List[float]) -> Dict[float, float]:
-    """Threshold per false-alarm target (alerts per 1000 vectors) on the given days.
-
-    The threshold is the smallest score value t with at most target/1000 of the vectors
-    scoring >= t. With ties the realised rate can fall below the target; it is reported.
-    """
     day_of = _utc_day(scores_df["ts"].to_numpy())
     s = np.sort(scores_df["score"].to_numpy()[np.isin(day_of, days)])
     if not len(s):
         raise SystemExit(f"No scores on the calibration days {days}")
     values = np.unique(s)
-    at_or_above = len(s) - np.searchsorted(s, values, side="left")   # decreasing
+    at_or_above = len(s) - np.searchsorted(s, values, side="left")
     out = {}
     for target in targets:
         allowed = np.floor(target / 1000.0 * len(s))
@@ -705,7 +571,6 @@ def thresholds_for_far(scores_df, days: List[str], targets: List[float]) -> Dict
 
 
 def false_alarm_rate(scores_df, days: Dict, thresholds: List[float]) -> Dict:
-    """Alerts per 1000 scored vectors on the clean days, per threshold and per day."""
     day_of = _utc_day(scores_df["ts"].to_numpy())
     z = scores_df["score"].to_numpy()
     codes = scores_df["code"].to_numpy()
@@ -760,12 +625,7 @@ def validation_false_alarms(validation, days: Dict) -> Dict:
     return {day: int((day_of == day).sum()) for day in days["clean"]}
 
 
-# ------------------------------------------------------------------ precision (RRCF)
-
-
 def cluster_precision(alerts_tl, windows_codes, windows_lo, windows_hi, gap_ms) -> Dict:
-    """Alert clusters (alerts on one instrument less than gap_ms apart) that overlap an
-    episode window. Only meaningful at the injected density."""
     if len(windows_codes) == 0 or len(alerts_tl) == 0:
         return {"clusters": 0, "precision": None}
     lo_keys = composite(windows_codes, windows_lo)
@@ -791,9 +651,6 @@ def cluster_precision(alerts_tl, windows_codes, windows_lo, windows_hi, gap_ms) 
     hit = np.bincount(cluster_id, weights=explained.astype(float)) > 0
     return {"alerts": int(len(keys)), "clusters": int(len(hit)), "precision": float(hit.mean()),
             "alert_level_precision": float(explained.mean())}
-
-
-# --------------------------------------------------------------------------- driver
 
 
 def evaluate(args) -> Dict:
@@ -836,13 +693,13 @@ def evaluate(args) -> Dict:
     days = clean_days(scores, episodes, args.warmup_days, args.clean_days, args.calibration_days, far_mode,
                       run_days)
 
-    target_of = {}   # far mode: threshold -> the false-alarm target it was calibrated for
+    target_of = {}
     operating_target = args.target_far
     if far_mode:
         target = args.target_far if args.target_far is not None else 1.0
         by_target = thresholds_for_far(scores, days["calibration"], sorted(set(args.far_grid + [target])))
         for t, thr in by_target.items():
-            target_of.setdefault(thr, t)   # ties can map several targets to one threshold
+            target_of.setdefault(thr, t)
         thresholds = sorted(target_of)
         operating, operating_target = by_target[target], target
         print(f"  thresholds calibrated on {days['calibration']}, false alarms reported on {days['headline']}"
@@ -872,9 +729,6 @@ def evaluate(args) -> Dict:
         p2_point = p2[p2["type"].isin(["price_spike", "price_deviation"])]
         p2_stale = p2[p2["type"] == "stale_price"]
         p4_price = p4[p4["type"] == "implausible_price"]
-        # null_price zeroes the last price; with the last traded price carried forward
-        # through quote-only rows a nulled trade looks like a quote update, so it cannot
-        # be detected and is not evaluated (older runs may still contain it)
         p4_null = p4[p4["type"] == "null_price"]
 
         result = {
@@ -889,7 +743,6 @@ def evaluate(args) -> Dict:
                 "not_evaluated_null_price_episodes": int(len(p4_null)),
             },
         }
-        # alert-level precision at the injected density, per family
         families = {
             "phase1": p1[["code", "start", "end"]].rename(columns={"start": "lo", "end": "hi"}),
             "phase2": pd.concat([
@@ -912,7 +765,7 @@ def evaluate(args) -> Dict:
     sweep_rows = []
     if args.thresholds or far_mode:
         print("Threshold sweep...")
-        sweep_args = argparse.Namespace(**{**vars(args), "bootstrap": 0})  # point estimates only
+        sweep_args = argparse.Namespace(**{**vars(args), "bootstrap": 0})
         for thr in thresholds:
             res = headline if thr == operating else phase_eval(thr, sweep_args)
             row = {"threshold": thr}
@@ -972,9 +825,6 @@ def _json_default(obj):
 def parse_args(argv=None):
     p = argparse.ArgumentParser(description="Evaluate feed-degradation detection against the simulator's ground truth")
     p.add_argument("--episodes", help="anomaly_log_episodes.csv from the simulator")
-    # Deprecated: the previous interface. The tick-level log is no longer the ground
-    # truth; its sibling <name>_episodes.csv is used instead, so existing make targets
-    # keep working (without the silence/validation logs, phases 3-4 are then skipped).
     p.add_argument("--ground-truth-csv", help=argparse.SUPPRESS)
     p.add_argument("--ground-truth-manifest", help=argparse.SUPPRESS)
     p.add_argument("--scores", required=True, help="scores parquet (exchange, instrument, timestamp_ms, a score column)")

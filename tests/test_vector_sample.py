@@ -1,8 +1,3 @@
-"""The sampled vector stream: the stride is applied once (in the runner), the surviving
-vectors are recorded, and a replay of the recording gives every model the same vectors in
-the same order. Includes an end-to-end test through the real run_multi_model.py (no Kafka)
-that runs models in separate replays and checks they score exactly the same rows."""
-
 import dataclasses
 import datetime as dt
 import importlib.util
@@ -40,7 +35,6 @@ T0 = dt.datetime(2021, 11, 8, 9, 0, 0, tzinfo=dt.timezone.utc)
 
 
 def make_vectors(n, start=1, seed=0):
-    """n deterministic vectors; the k-th has seq=start+k and a distinct timestamp."""
     rng = np.random.RandomState(seed)
     out = []
     for k in range(n):
@@ -74,9 +68,6 @@ def record(path, vectors, buffer_rows=50_000):
     w.close()
 
 
-# ------------------------------------------------------------------- StrideSampler
-
-
 def test_stride_keeps_every_tenth_and_the_first_kept_is_the_tenth():
     s = StrideSampler(10)
     kept = [i for i in range(1, 101) if s.take()]
@@ -94,13 +85,10 @@ def test_stride_must_be_positive():
         StrideSampler(0)
 
 
-# ------------------------------------------------------------- record / read round trip
-
-
 def test_round_trip_is_field_for_field_equal_and_ordered(tmp_path):
     vectors = make_vectors(1234)
     path = tmp_path / "s.parquet"
-    record(path, vectors, buffer_rows=100)  # several row groups
+    record(path, vectors, buffer_rows=100)
     assert sample_row_count(str(path)) == 1234
     assert list(read_vector_sample(str(path), batch_rows=97)) == vectors
 
@@ -112,7 +100,7 @@ def test_timestamps_keep_microseconds_and_the_same_instant(tmp_path):
     path = tmp_path / "s.parquet"
     record(path, [v])
     (back,) = list(read_vector_sample(str(path)))
-    assert back.timestamp == v.timestamp  # same instant (aware datetimes compare by instant)
+    assert back.timestamp == v.timestamp
     assert back.timestamp.microsecond == 123456
     assert int(back.timestamp.timestamp() * 1000) == int(v.timestamp.timestamp() * 1000)
 
@@ -122,7 +110,7 @@ def test_file_only_appears_when_complete(tmp_path):
     w = VectorSampleWriter(str(path), buffer_rows=10)
     for i, v in enumerate(make_vectors(25), start=1):
         w.write(i, v)
-    assert not path.exists()  # still being written: only the .partial file exists
+    assert not path.exists()
     assert Path(w.partial_path).exists()
     w.close()
     assert path.exists() and not Path(w.partial_path).exists()
@@ -135,9 +123,6 @@ def test_empty_recording_is_a_valid_empty_file(tmp_path):
     assert list(read_vector_sample(str(path))) == []
 
 
-# ------------------------------------------------------- the runner applies the stride once
-
-
 class _FakeProc:
     def __init__(self, alive=True):
         self.alive = alive
@@ -147,8 +132,6 @@ class _FakeProc:
 
 
 class _FullQueue:
-    """A queue that is always full."""
-
     def put(self, item, block=True, timeout=None):
         raise queue.Full
 
@@ -174,7 +157,7 @@ def test_runner_sends_the_same_every_tenth_vector_to_every_model_and_records_it(
     kept = [r._handle_vector(v) for v in vectors]
     r.recorder.close()
 
-    expected = [vectors[i] for i in range(9, 95, 10)]  # 10th, 20th, ... 90th
+    expected = [vectors[i] for i in range(9, 95, 10)]
     assert sum(kept) == 9
     assert drain(r.models["zscore"]["queue"]) == expected
     assert drain(r.models["isoforest"]["queue"]) == expected
@@ -194,16 +177,13 @@ def test_a_full_queue_drops_for_that_model_only_and_never_changes_the_recording(
 
     expected = [vectors[i] for i in range(9, 100, 10)]
     assert r.dropped_counts == {"zscore": 0, "isoforest": 10}
-    assert drain(r.models["zscore"]["queue"]) == expected  # the other model is unaffected
-    assert list(read_vector_sample(str(rec))) == expected  # and so is the recording
+    assert drain(r.models["zscore"]["queue"]) == expected
+    assert list(read_vector_sample(str(rec))) == expected
 
 
 def test_default_stride_is_ten():
     assert rmm.SAMPLE_STRIDE == 10
     assert make_runner(None).sampler.stride == 10
-
-
-# ---------------------------------------------------------------------------- replay
 
 
 def test_replay_feeds_every_recorded_vector_in_order_then_the_sentinel(tmp_path):
@@ -218,13 +198,12 @@ def test_replay_feeds_every_recorded_vector_in_order_then_the_sentinel(tmp_path)
 
 
 def test_replay_does_not_apply_the_stride_again(tmp_path):
-    # the recording is already sampled: a replay of 40 rows must send 40 rows, not 4
     path = tmp_path / "s.parquet"
     record(path, make_vectors(40))
     r = make_runner(tmp_path, names=("zscore",))
     r.running = True
     r._run_replay(str(path), 40)
-    assert len(drain(r.models["zscore"]["queue"])) == 41  # 40 vectors + sentinel
+    assert len(drain(r.models["zscore"]["queue"])) == 41
 
 
 def test_replay_fails_loudly_when_a_worker_died_instead_of_dropping(tmp_path):
@@ -243,12 +222,9 @@ def test_replay_refuses_to_overwrite_existing_scores(tmp_path):
     assert (tmp_path / "scores_zscore.parquet").read_bytes() == b"precious"
 
     r2 = make_runner(tmp_path, names=("zscore",), parquet_file=str(out), overwrite=True)
-    r2._check_outputs_free()  # allowed with --overwrite
+    r2._check_outputs_free()
     r3 = make_runner(tmp_path, names=("isoforest",), parquet_file=str(out))
-    r3._check_outputs_free()  # nothing exists for isoforest
-
-
-# ------------------------------------------------------------------- model selection
+    r3._check_outputs_free()
 
 
 def test_model_selection_precedence():
@@ -266,9 +242,6 @@ def test_registry_knows_every_model():
     assert set(reg) == base | ablation
 
 
-# ------------------------------------------------- end to end, real workers, no Kafka
-
-
 def _replay(sample, models, out_dir, extra=()):
     env = dict(os.environ, PYTHONPATH=str(ROOT))
     return subprocess.run(
@@ -284,8 +257,6 @@ def _keys(path):
 
 
 def test_models_replayed_in_separate_runs_score_exactly_the_same_vectors(tmp_path):
-    # zscore and isoforest train on the first day of data and score from the next day on:
-    # 20,000 vectors on day 1, then 2,000 on day 2
     n = 22_000
     vectors = make_vectors(n)
     vectors = vectors[:20_000] + [dataclasses.replace(v, timestamp=v.timestamp + dt.timedelta(days=1))
@@ -296,7 +267,7 @@ def test_models_replayed_in_separate_runs_score_exactly_the_same_vectors(tmp_pat
     a, b = tmp_path / "a", tmp_path / "b"
     ra = _replay(sample, "zscore", a)
     assert ra.returncode == 0, ra.stdout[-2000:] + ra.stderr[-2000:]
-    rb = _replay(sample, "isoforest,zscore", b)  # a different run, different model set
+    rb = _replay(sample, "isoforest,zscore", b)
     assert rb.returncode == 0, rb.stdout[-2000:] + rb.stderr[-2000:]
 
     z_a, z_b, iso_b = (_keys(a / "scores_zscore.parquet"), _keys(b / "scores_zscore.parquet"),
@@ -307,7 +278,6 @@ def test_models_replayed_in_separate_runs_score_exactly_the_same_vectors(tmp_pat
     assert z_b == expected
     assert iso_b == expected
 
-    # zscore is deterministic, so its scores must be identical across the two runs too
     sa = pd.read_parquet(a / "scores_zscore.parquet")["z_score"].to_numpy()
     sb = pd.read_parquet(b / "scores_zscore.parquet")["z_score"].to_numpy()
     assert np.array_equal(sa, sb)
@@ -324,11 +294,7 @@ def test_replay_run_refuses_to_overwrite_scores_of_a_previous_run(tmp_path):
     assert (out / "scores_zscore.parquet").read_bytes() == b"precious"
 
 
-# ------------------------------------------- the runner's summary and the archive check
-
-
 def run_and_shut_down(tmp_path, n_vectors, tamper=None):
-    """A live runner that consumed n_vectors, then shut down (writes the summary)."""
     rec = tmp_path / "vectors" / "vectors_sample.parquet"
     r = make_runner(tmp_path, record_file=str(rec))
     for v in make_vectors(n_vectors):
@@ -356,7 +322,7 @@ def test_shutdown_prints_and_writes_a_consistent_summary(tmp_path, capsys):
 
 def test_the_summary_flags_a_kept_count_that_disagrees_with_the_stride(tmp_path, capsys):
     def tamper(r):
-        r.sampled_count += 1  # the runner "kept" a vector the stride did not select
+        r.sampled_count += 1
     run_and_shut_down(tmp_path, 95, tamper)
     assert "MISMATCH" in capsys.readouterr().out
     summary = json.loads((tmp_path / "vectors" / "vectors_sample.summary.json").read_text())
@@ -385,13 +351,12 @@ def test_checker_records_which_models_dropped_vectors(tmp_path):
         r.dropped_counts["isoforest"] = 7
     rec, _ = run_and_shut_down(tmp_path, 200, tamper)
     results = cvs.check(str(rec))
-    assert not failed(results)  # a note, not a failure
+    assert not failed(results)
     assert any("isoforest dropped 7" in detail for _, _, detail in results)
 
 
 def test_checker_fails_when_the_file_holds_fewer_rows_than_the_runner_recorded(tmp_path):
     rec, _ = run_and_shut_down(tmp_path, 95)
-    # a truncated / different file: 8 rows where the summary says 9
     vectors = list(read_vector_sample(str(rec)))[:8]
     rec.unlink()
     w = VectorSampleWriter(str(rec))
@@ -410,7 +375,7 @@ def test_checker_fails_on_a_gap_in_stream_index(tmp_path):
     rec.unlink()
     w = VectorSampleWriter(str(rec))
     for i, v in enumerate(vectors, start=1):
-        w.write(i * 10 + (10 if i > 4 else 0), v)  # positions jump after the 4th vector
+        w.write(i * 10 + (10 if i > 4 else 0), v)
     w.close()
     assert "stream_index runs stride, 2*stride, ... without a gap" in failed(cvs.check(str(rec)))
 
@@ -420,7 +385,7 @@ def test_checker_fails_when_the_summary_is_missing_or_disagrees(tmp_path):
     summary = tmp_path / "vectors" / "vectors_sample.summary.json"
 
     data = json.loads(summary.read_text())
-    data["consumed"] = 500  # the runner "saw" many more vectors than the file accounts for
+    data["consumed"] = 500
     summary.write_text(json.dumps(data))
     assert "kept == consumed // stride" in failed(cvs.check(str(rec)))
 

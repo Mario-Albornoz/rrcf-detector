@@ -28,19 +28,11 @@ class RRCFForestDetector(BaseDetector):
         self.min_fill_threshold = config.get("min_fill_threshold", 25)
         self.seed = config.get("seed", 42)
         self.forests: Dict[str, ForestState] = {}
-        # Ablation options (defaults = the evaluated model).
         self.name = config.get("name", "rrcf_forest")
         self.features = resolve(config.get("features", "all"))
-        # "exchange_class": one forest per exchange and class (shared by its instruments);
-        # "instrument": one forest per instrument.
         self.key_by = config.get("key_by", "exchange_class")
         if self.key_by not in ("exchange_class", "instrument"):
             raise ValueError(f"key_by must be exchange_class or instrument, got {self.key_by}")
-        # A cold forest (window below min_fill_threshold) normally emits nothing. Per-
-        # instrument forests stay cold on quiet instruments; if they emitted nothing, those
-        # vectors would drop out of the evaluation's scorable set and recall would be
-        # computed on an easier denominator. With cold_score set, a cold forest emits that
-        # (non-alerting) score instead, so every variant scores the same vectors.
         self.cold_score = config.get("cold_score")
 
     def _forest(self, key: str) -> ForestState:

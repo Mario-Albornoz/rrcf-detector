@@ -11,7 +11,6 @@ class Stats:
 
 
 def update_stats(state, score: float):
-    """Update Welford statistics for TreeState."""
     state.score_count += 1
     delta = score - state.stats.mean
     state.stats.mean += delta / state.score_count

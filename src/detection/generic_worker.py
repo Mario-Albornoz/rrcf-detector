@@ -1,19 +1,3 @@
-"""
-Generic worker for any detector model (RRCF or baselines).
-
-Supports all models implementing BaseDetector interface:
-- RRCF (via AnomalyDetector adapter)
-- Z-Score Threshold
-- Isolation Forest
-- Half-Space Trees
-
-Writes scores directly to parquet file for thesis evaluation.
-
-The worker scores every vector it receives. Which vectors it receives (the 1-in-10 stride)
-is decided once, upstream, by the runner (scripts/run_multi_model.py): see
-src/detection/vector_sample.py for why.
-"""
-
 import multiprocessing as mp
 import os
 import queue
@@ -30,8 +14,6 @@ from src.kafka.producer import AlertProducer
 
 
 class ParquetWriter:
-    """Buffered parquet writer for anomaly scores."""
-
     def __init__(self, output_file: str, buffer_size: int = 1000):
         self.output_file = output_file
         self.buffer_size = buffer_size
@@ -46,7 +28,6 @@ class ParquetWriter:
         Path(output_file).parent.mkdir(parents=True, exist_ok=True)
 
     def _create_schema(self):
-        """Define parquet schema matching thesis evaluation requirements."""
         return pa.schema(
             [
                 ("exchange", pa.string()),
@@ -67,7 +48,6 @@ class ParquetWriter:
         )
 
     def write(self, score_dict):
-        """Buffer a score for writing."""
         self.buffer.append(score_dict)
         self.total_writes += 1
 
@@ -75,7 +55,6 @@ class ParquetWriter:
             self.flush()
 
     def flush(self):
-        """Flush buffer to parquet file."""
         if not self.buffer:
             return
 
@@ -105,7 +84,6 @@ class ParquetWriter:
             traceback.print_exc()
 
     def close(self):
-        """Flush remaining buffer and close writer."""
         self.flush()
         if self.writer:
             self.writer.close()
@@ -162,7 +140,6 @@ class GenericWorker:
             try:
                 vector = self.input_queue.get(timeout=1.0)
 
-                # shutdown sentinel
                 if vector is None:
                     break
 
@@ -203,7 +180,6 @@ class GenericWorker:
                     self._report_metrics(model_name)
 
             except queue.Empty:
-                # Normal timeout when no data is available - not an error
                 continue
             except Exception as e:
                 if self.running:
@@ -226,7 +202,6 @@ class GenericWorker:
             self.publisher.close()
 
     def _report_metrics(self, model_name: str, final: bool = False):
-        """Report worker metrics"""
         import time
 
         now = time.time()

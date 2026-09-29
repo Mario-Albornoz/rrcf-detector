@@ -1,5 +1,3 @@
-"""Configuration classes for RRCF detection service."""
-
 from dataclasses import dataclass, field
 
 
@@ -59,19 +57,16 @@ class ServiceConfig:
 
     @classmethod
     def from_dict(cls, config_dict: dict) -> "ServiceConfig":
-        # Extract nested sections with defaults
         detector_dict = config_dict.get("detector", {})
         kafka_dict = config_dict.get("kafka", {})
         service_dict = config_dict.get("service", {})
-        
-        # Build detector config
+
         detector_config = DetectorConfig(
             window_size=detector_dict.get("window_size", 1000),
             min_fill_threshold=detector_dict.get("min_fill_threshold", 50),
             rrcf_forest=detector_dict.get("rrcf_forest") or {},
         )
 
-        # Build kafka config with ALL properties from YAML
         kafka_config = KafkaConfig(
             bootstrap_servers=kafka_dict.get("bootstrap_servers", "localhost:9092"),
             input_topic=kafka_dict.get("input_topic", "normalized-vectors"),
@@ -89,7 +84,6 @@ class ServiceConfig:
             retries=kafka_dict.get("retries", 3),
         )
 
-        # Build partitioner config
         partitioner_config = PartitionerConfig(
             num_workers=service_dict.get("num_workers", 4),
             queue_max_size=service_dict.get("queue_max_size", 10000),

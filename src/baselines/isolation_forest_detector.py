@@ -1,18 +1,3 @@
-"""
-Isolation Forest Baseline Detector
-
-scikit-learn IsolationForest trained on first two weeks of data, then frozen.
-One instance per (exchange, instrument_class).
-
-Represents current best-practice for unsupervised batch anomaly detection.
-Used to measure concept drift - how quickly batch models degrade as markets evolve.
-
-Training Assumption:
-    First two weeks of unmodified replay data (no injected anomalies).
-    Model is intentionally frozen (not retrained) to measure concept drift.
-    This choice is documented in the thesis methodology section.
-"""
-
 from typing import Dict, Optional
 
 import numpy as np
@@ -25,13 +10,6 @@ from src.kafka.consumer import NormalizedVectorDto
 
 
 class IsolationForestDetector(BaseDetector):
-    """
-    Frozen batch ML baseline using Isolation Forest.
-
-    Training phase: Collects samples and fits sklearn model.
-    Frozen phase: Uses frozen model to score new samples.
-    """
-
     def __init__(self, config: dict):
         self.config = config
         self.training_samples = config.get("training_samples", 20000)
@@ -64,7 +42,7 @@ class IsolationForestDetector(BaseDetector):
         )
 
         if not self.is_trained and self.window.ends_before(data.timestamp):
-            self._train()   # the first vector after the training days is scored
+            self._train()
 
         if not self.is_trained:
             self.training_data.add(features)
@@ -90,7 +68,6 @@ class IsolationForestDetector(BaseDetector):
         }
 
     def _train(self):
-        """Train Isolation Forest and freeze."""
         training_matrix = self.training_data.sample()
 
         self.model = IsolationForest(
@@ -112,17 +89,10 @@ class IsolationForestDetector(BaseDetector):
         )
 
     def _compute_score(self, features: np.ndarray) -> float:
-        """
-        Compute anomaly score using Isolation Forest.
-
-        Note: sklearn returns negative scores where more negative = more anomalous.
-        We negate to match RRCF convention (higher = more anomalous).
-        """
         score = self.model.score_samples([features])[0]
         return float(-score)
 
     def _update_stats(self, raw_score: float):
-        """Update rolling statistics using Welford's algorithm."""
         self.score_count += 1
         delta = raw_score - self.stats.mean
         self.stats.mean += delta / self.score_count

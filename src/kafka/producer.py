@@ -22,12 +22,10 @@ class AnomalyAlertDto:
 class AlertProducer:
 
     def __init__(self, config: dict, metrics_report_interval: int = 5):
-        # Extract topic names if present (not valid Kafka producer configs)
         producer_config = {k: v for k, v in config.items() 
                           if k not in ['input_topic', 'output_topic', 'consumer_group_id', 
                                       'auto_offset_reset', 'producer']}
-        
-        # If there's a nested 'producer' config, merge those settings
+
         if 'producer' in config:
             producer_config.update(config['producer'])
         
@@ -101,9 +99,6 @@ class AlertProducer:
         return queued
 
     def _serialize_alert(self, alert: dict) -> bytes:
-        # Pass through all fields from the alert
-        # This supports both old format (alert_type) and new format (alert_level, model, z_score, etc.)
-        # OPT_SERIALIZE_NUMPY: handle numpy.float64 and other numpy types automatically
         return orjson.dumps(alert, option=orjson.OPT_SERIALIZE_NUMPY)
 
     def _make_key(self, alert: dict) -> bytes:

@@ -1,21 +1,4 @@
 #!/usr/bin/env python3
-"""
-Collect data from Kafka topics for offline analysis.
-
-Consumes all messages from input and output topics and saves to parquet files
-for later evaluation. Useful after simulation runs to analyze detector performance.
-
-Usage:
-    python scripts/collect_data.py \\
-        --input-topic normalized-vectors \\
-        --output-topic anomaly-scores \\
-        --output-dir ./data/run_001 \\
-        --bootstrap-servers localhost:9092
-
-Output:
-    - <output-dir>/input_vectors.parquet
-    - <output-dir>/output_scores.parquet
-"""
 
 import argparse
 import json
@@ -28,8 +11,6 @@ from confluent_kafka import Consumer, KafkaError
 
 
 def consume_topic(bootstrap_servers: str, topic: str, group_id: str) -> pd.DataFrame:
-    """Consume all messages from a Kafka topic into a DataFrame."""
-    
     config = {
         "bootstrap.servers": bootstrap_servers,
         "group.id": group_id,
