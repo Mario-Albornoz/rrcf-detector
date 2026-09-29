@@ -119,7 +119,7 @@ def model_registry(detector_config) -> dict:
             OnlineIForestDetector,
             {
                 "window_size": 256,
-                "num_trees": 15,
+                "num_trees": 5,
                 "max_leaf_samples": 25,
                 "type": "adaptive",
                 "min_fill_threshold": detector_config.min_fill_threshold,
